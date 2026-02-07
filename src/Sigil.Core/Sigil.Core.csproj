@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Sigil</RootNamespace>
+    <PackageId>Sigil</PackageId>
+    <Description>Distributed trust system for software artifact signing and verification</Description>
+    <PackageTags>signing;trust;security;supply-chain;verification</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+</Project>
