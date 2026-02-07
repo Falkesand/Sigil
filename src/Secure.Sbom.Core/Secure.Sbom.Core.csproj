@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Secure.Sbom</RootNamespace>
+    <PackageId>Secure.Sbom</PackageId>
+    <Description>Distributed trust system for software artifact signing and verification</Description>
+    <PackageTags>sbom;signing;trust;security;supply-chain</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+</Project>

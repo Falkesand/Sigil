@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Secure.Sbom.Cli</RootNamespace>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>sbom-sign</ToolCommandName>
+    <PackageId>Secure.Sbom.Cli</PackageId>
+    <Description>CLI tool for signing and verifying software artifacts with distributed trust</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Secure.Sbom.Core\Secure.Sbom.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+</Project>
