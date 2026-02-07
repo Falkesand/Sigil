@@ -111,7 +111,7 @@ sigil sign my-app.tar.gz --algorithm ecdsa-p384
 | MITM protection | No (attacker can re-sign) | Yes (with trusted fingerprint) |
 | Key management | None | User manages PEM file |
 | CI/CD | Just works | Mount PEM file |
-| Trust bundles (Phase 2) | Not useful | Yes |
+| Trust bundles | Not useful | Yes |
 
 ## Envelope format
 
@@ -188,12 +188,210 @@ This binds the signature to the file content, its metadata (name, digests), and 
 
 PEM auto-detection means you never need to tell Sigil what algorithm a key uses — it parses the key's OID from the DER encoding and dispatches to the correct implementation.
 
+## Trust bundles
+
+Verifying a signature tells you the file hasn't been tampered with, but it doesn't tell you if you should trust the key that signed it. Trust bundles solve this.
+
+A trust bundle is a signed JSON file that says: "I trust these specific keys, for these purposes, until these dates." Think of it like a browser's list of trusted certificate authorities — except you create your own, for your own keys, without any third party involved.
+
+### The problem trust bundles solve
+
+Without a trust bundle, `sigil verify` answers one question:
+
+> "Was this file signed by the key in the envelope?"
+
+With a trust bundle, it answers a more useful question:
+
+> "Was this file signed by a key I actually trust?"
+
+### Creating a trust bundle
+
+Start by generating keys — one "authority" key that signs the bundle itself, and one or more "signer" keys that sign your actual files:
+
+```
+sigil generate -o authority
+sigil generate -o ci-key
+```
+
+Create an empty bundle:
+
+```
+sigil trust create --name "my-project" -o trust.json
+```
+
+Add the CI key as a trusted key:
+
+```
+sigil trust add trust.json \
+  --fingerprint sha256:abc123... \
+  --name "CI Pipeline Key"
+```
+
+Sign the bundle with the authority key. This locks the bundle — nobody can add or remove keys without the authority's private key:
+
+```
+sigil trust sign trust.json --key authority.pem -o trust-signed.json
+```
+
+### Verifying with trust
+
+Now when you verify a file, you can pass the trust bundle and tell Sigil which authority you trust:
+
+```
+sigil verify release.tar.gz \
+  --trust-bundle trust-signed.json \
+  --authority sha256:def456...
+```
+
+If the file was signed by a key that's in the bundle, you'll see:
+
+```
+Artifact: release.tar.gz
+Digests: MATCH
+  [TRUSTED] sha256:abc123... (CI Pipeline Key)
+           Key is directly trusted.
+
+All signatures TRUSTED.
+```
+
+If the signing key isn't in the bundle:
+
+```
+  [UNTRUSTED] sha256:999888...
+           Key not found in trust bundle.
+```
+
+Without `--trust-bundle`, Sigil behaves exactly as before — pure cryptographic verification, no trust decisions.
+
+### Scopes
+
+You can restrict what a key is trusted to do. Scopes are optional — without them, a key is trusted for everything.
+
+```
+sigil trust add trust.json \
+  --fingerprint sha256:abc123... \
+  --name "CI Key" \
+  --scope-names "*.tar.gz" "*.zip" \
+  --scope-labels "ci-pipeline" \
+  --scope-algorithms "ecdsa-p256" \
+  --not-after 2027-01-01T00:00:00Z
+```
+
+This says: trust this key only for signing `.tar.gz` and `.zip` files, only when labeled `ci-pipeline`, only with ECDSA P-256, and only until January 2027. If any of those conditions aren't met, you'll see `[SCOPE_MISMATCH]` or `[EXPIRED]` instead of `[TRUSTED]`.
+
+### Endorsements
+
+Sometimes you want to say "I trust Key A, and Key A vouches for Key B." Endorsements let you do this without adding Key B directly to the bundle.
+
+```
+sigil trust endorse trust.json \
+  --endorser sha256:aaa... \
+  --endorsed sha256:bbb... \
+  --statement "Authorized build key for CI"
+```
+
+When Sigil evaluates trust, if it finds a matching endorsement from a key that's directly in the bundle, the endorsed key is treated as trusted:
+
+```
+  [TRUSTED] sha256:bbb...
+           Endorsed by CI Pipeline Key.
+```
+
+Endorsements are **non-transitive**: if Key A endorses Key B, and Key B endorses Key C, Key C is **not** trusted. Only the bundle authority decides which endorsements to include, and only direct bundle keys can be endorsers.
+
+Endorsements can also have scopes and expiry dates, further restricting what the endorsed key is trusted for.
+
+### Viewing a bundle
+
+```
+sigil trust show trust-signed.json
+```
+
+```
+Trust Bundle: my-project
+Version: 1.0
+Created: 2026-02-08T12:00:00Z
+
+Keys (2):
+  sha256:abc123... (CI Pipeline Key)
+    Expires: 2027-01-01T00:00:00Z
+    Names: *.tar.gz, *.zip
+  sha256:def456... (Release Manager)
+
+Endorsements (1):
+  sha256:abc123... -> sha256:bbb888...
+    Statement: Authorized build key for CI
+
+Signature: PRESENT
+  Signed by: sha256:def456...
+  Algorithm: ecdsa-p256
+  Timestamp: 2026-02-08T12:00:00Z
+```
+
+### How trust evaluation works
+
+When you pass `--trust-bundle` and `--authority` to `sigil verify`, here's what happens for each signature:
+
+1. **Verify the bundle** — Check that the bundle is signed by the authority you specified. If not, the bundle is rejected entirely.
+2. **Check the crypto** — If the cryptographic signature is invalid, the key is `Untrusted` regardless of what the bundle says. Crypto trumps trust.
+3. **Look up the key** — Search for the signing key's fingerprint in the bundle's key list.
+4. **If found** — Check expiry, then check scopes. If everything passes: `Trusted`.
+5. **If not found** — Search endorsements where this key is endorsed by a key that *is* in the bundle (and that endorser isn't expired, and the endorsement isn't expired, and the scopes match). If found: `TrustedViaEndorsement`. Otherwise: `Untrusted`.
+
+### Trust bundle format
+
+```json
+{
+  "version": "1.0",
+  "kind": "trust-bundle",
+  "metadata": {
+    "name": "my-project",
+    "created": "2026-02-08T12:00:00Z"
+  },
+  "keys": [
+    {
+      "fingerprint": "sha256:abc123...",
+      "displayName": "CI Pipeline Key",
+      "scopes": {
+        "namePatterns": ["*.tar.gz"],
+        "labels": ["ci-pipeline"],
+        "algorithms": ["ecdsa-p256"]
+      },
+      "notAfter": "2027-01-01T00:00:00Z"
+    }
+  ],
+  "endorsements": [
+    {
+      "endorser": "sha256:aaa...",
+      "endorsed": "sha256:bbb...",
+      "statement": "Authorized build key",
+      "timestamp": "2026-02-08T12:00:00Z"
+    }
+  ],
+  "signature": {
+    "keyId": "sha256:def456...",
+    "algorithm": "ecdsa-p256",
+    "publicKey": "base64-SPKI...",
+    "value": "base64-signature...",
+    "timestamp": "2026-02-08T12:00:00Z"
+  }
+}
+```
+
+The `signature` field covers everything above it. When the bundle is signed, Sigil computes the JCS-canonicalized JSON of everything except `signature`, then signs that with the authority key.
+
 ## CLI reference
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
 sigil sign <file> [--key <private.pem>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name]
-sigil verify <file> [--signature path]
+sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint]
+sigil trust create --name <name> [-o path] [--description "text"]
+sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
+sigil trust remove <bundle> --fingerprint <fp>
+sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
+sigil trust sign <bundle> --key <private.pem> [-o path] [--passphrase "pass"]
+sigil trust show <bundle>
 ```
 
 **generate**: Create a key pair for persistent signing.
@@ -210,11 +408,20 @@ sigil verify <file> [--signature path]
 **verify**: Verify a file's signature.
 - Public key is extracted from the `.sig.json` — no key import needed
 - Algorithm is read from the envelope — works with any supported algorithm
+- `--trust-bundle` and `--authority` enable trust evaluation on top of crypto verification
+
+**trust create**: Create an empty unsigned trust bundle.
+
+**trust add / remove**: Add or remove trusted keys from an unsigned bundle.
+
+**trust endorse**: Add an endorsement ("Key A vouches for Key B") to an unsigned bundle.
+
+**trust sign**: Sign a bundle with an authority key. This locks the bundle — modifications require re-signing.
+
+**trust show**: Display the contents of a trust bundle (keys, endorsements, signature status).
 
 ## What's coming
 
-- **Trust bundles** — Curated, signed lists of trusted keys. Like browser CA stores, but anyone can create one.
-- **Endorsements** — Lightweight "Key A vouches for Key B" statements.
 - **Ed25519** — When the .NET native API ships.
 - **ML-DSA-65** — Post-quantum signatures.
 - **Discovery** — Optional well-known URLs, DNS records, and git-based trust bundles.

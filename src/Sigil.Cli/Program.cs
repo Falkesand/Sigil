@@ -7,5 +7,14 @@ rootCommand.Add(GenerateCommand.Create());
 rootCommand.Add(SignCommand.Create());
 rootCommand.Add(VerifyCommand.Create());
 
+var trustCommand = new Command("trust", "Manage trust bundles");
+trustCommand.Add(TrustCreateCommand.Create());
+trustCommand.Add(TrustAddCommand.Create());
+trustCommand.Add(TrustRemoveCommand.Create());
+trustCommand.Add(TrustEndorseCommand.Create());
+trustCommand.Add(TrustSignCommand.Create());
+trustCommand.Add(TrustShowCommand.Create());
+rootCommand.Add(trustCommand);
+
 var config = new CommandLineConfiguration(rootCommand);
 return await config.InvokeAsync(args);

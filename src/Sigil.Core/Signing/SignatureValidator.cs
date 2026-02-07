@@ -10,6 +10,7 @@ public sealed class SignatureVerificationResult
 {
     public required string KeyId { get; init; }
     public required bool IsValid { get; init; }
+    public string? Algorithm { get; init; }
     public string? Label { get; init; }
     public string? Error { get; init; }
 }
@@ -98,6 +99,7 @@ public static class SignatureValidator
                 {
                     KeyId = sig.KeyId,
                     IsValid = false,
+                    Algorithm = sig.Algorithm,
                     Label = sig.Label,
                     Error = "Public key not found in signature entry."
                 };
@@ -114,6 +116,7 @@ public static class SignatureValidator
                 {
                     KeyId = sig.KeyId,
                     IsValid = false,
+                    Algorithm = sig.Algorithm,
                     Label = sig.Label,
                     Error = "Public key fingerprint does not match keyId."
                 };
@@ -133,6 +136,7 @@ public static class SignatureValidator
             {
                 KeyId = sig.KeyId,
                 IsValid = isValid,
+                Algorithm = sig.Algorithm,
                 Label = sig.Label,
                 Error = isValid ? null : "Signature verification failed."
             };
@@ -143,6 +147,7 @@ public static class SignatureValidator
             {
                 KeyId = sig.KeyId,
                 IsValid = false,
+                Algorithm = sig.Algorithm,
                 Label = sig.Label,
                 Error = ex.Message
             };
