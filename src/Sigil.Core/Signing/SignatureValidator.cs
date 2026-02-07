@@ -125,7 +125,7 @@ public static class SignatureValidator
                 sig.KeyId, sig.Algorithm, sig.Timestamp, sig.Label);
 
             // Create verifier from the embedded SPKI and verify
-            var verifier = ECDsaP256Verifier.FromPublicKey(spkiBytes);
+            using var verifier = VerifierFactory.CreateFromPublicKey(spkiBytes, sig.Algorithm);
             var signatureBytes = Convert.FromBase64String(sig.Value);
             var isValid = verifier.Verify(signingPayload, signatureBytes);
 

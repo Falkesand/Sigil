@@ -4,16 +4,15 @@ using System.Text;
 namespace Sigil.Crypto;
 
 /// <summary>
-/// Signs data using ECDSA with the NIST P-256 curve.
+/// Signs data using ECDSA with the NIST P-384 curve.
 /// BCL-only implementation — no external dependencies.
-/// Will be swapped to Ed25519 when the native static API ships in a future .NET SDK.
 /// </summary>
-public sealed class ECDsaP256Signer : ISigner
+public sealed class ECDsaP384Signer : ISigner
 {
     private readonly ECDsa _key;
     private bool _disposed;
 
-    public SigningAlgorithm Algorithm => SigningAlgorithm.ECDsaP256;
+    public SigningAlgorithm Algorithm => SigningAlgorithm.ECDsaP384;
 
     public byte[] PublicKey
     {
@@ -24,41 +23,41 @@ public sealed class ECDsaP256Signer : ISigner
         }
     }
 
-    private ECDsaP256Signer(ECDsa key)
+    private ECDsaP384Signer(ECDsa key)
     {
         _key = key;
     }
 
-    public static ECDsaP256Signer Generate()
+    public static ECDsaP384Signer Generate()
     {
-        var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        return new ECDsaP256Signer(key);
+        var key = ECDsa.Create(ECCurve.NamedCurves.nistP384);
+        return new ECDsaP384Signer(key);
     }
 
-    public static ECDsaP256Signer FromPkcs8(byte[] pkcs8)
+    public static ECDsaP384Signer FromPkcs8(byte[] pkcs8)
     {
         var key = ECDsa.Create();
         key.ImportPkcs8PrivateKey(pkcs8, out _);
-        return new ECDsaP256Signer(key);
+        return new ECDsaP384Signer(key);
     }
 
-    public static ECDsaP256Signer FromEncryptedPkcs8(byte[] encryptedPkcs8, ReadOnlySpan<char> password)
+    public static ECDsaP384Signer FromEncryptedPkcs8(byte[] encryptedPkcs8, ReadOnlySpan<char> password)
     {
         var key = ECDsa.Create();
         key.ImportEncryptedPkcs8PrivateKey(password, encryptedPkcs8, out _);
-        return new ECDsaP256Signer(key);
+        return new ECDsaP384Signer(key);
     }
 
-    public static ECDsaP256Signer FromPem(ReadOnlySpan<char> pem)
+    public static ECDsaP384Signer FromPem(ReadOnlySpan<char> pem)
     {
         if (pem.IsEmpty || pem.IsWhiteSpace())
             throw new ArgumentException("Value cannot be null or whitespace.", nameof(pem));
         var key = ECDsa.Create();
         key.ImportFromPem(pem);
-        return new ECDsaP256Signer(key);
+        return new ECDsaP384Signer(key);
     }
 
-    public static ECDsaP256Signer FromEncryptedPem(ReadOnlySpan<char> pem, ReadOnlySpan<char> passphrase)
+    public static ECDsaP384Signer FromEncryptedPem(ReadOnlySpan<char> pem, ReadOnlySpan<char> passphrase)
     {
         if (pem.IsEmpty || pem.IsWhiteSpace())
             throw new ArgumentException("Value cannot be null or whitespace.", nameof(pem));
@@ -66,14 +65,14 @@ public sealed class ECDsaP256Signer : ISigner
             throw new ArgumentException("Value cannot be null or whitespace.", nameof(passphrase));
         var key = ECDsa.Create();
         key.ImportFromEncryptedPem(pem, passphrase);
-        return new ECDsaP256Signer(key);
+        return new ECDsaP384Signer(key);
     }
 
     public byte[] Sign(byte[] data)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(data);
-        return _key.SignData(data, HashAlgorithmName.SHA256);
+        return _key.SignData(data, HashAlgorithmName.SHA384);
     }
 
     public byte[] ExportPkcs8()

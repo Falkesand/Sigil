@@ -39,6 +39,7 @@ That's it. No key generation needed. A key pair is created in memory, the file i
 Output:
 ```
 Signed: my-app.tar.gz
+Algorithm: ecdsa-p256
 Key: sha256:9c8b0e1d9d9c...
 Mode: ephemeral (key not persisted)
 Signature: my-app.tar.gz.sig.json
@@ -77,6 +78,28 @@ sigil sign my-app.tar.gz --key mykey.pem
 ```
 
 Same fingerprint every time. This enables trust — others can verify that you (specifically) signed something.
+
+### Choose your algorithm
+
+Sigil supports multiple signing algorithms. The default is ECDSA P-256.
+
+```
+sigil generate -o mykey --algorithm ecdsa-p384
+sigil generate -o mykey --algorithm rsa-pss-sha256
+```
+
+When signing with a PEM file, the algorithm is **auto-detected** — no need to specify it:
+
+```
+sigil sign my-app.tar.gz --key rsa-key.pem    # auto-detects RSA
+sigil sign my-app.tar.gz --key ec-key.pem      # auto-detects P-256 or P-384
+```
+
+For ephemeral signing with a non-default algorithm:
+
+```
+sigil sign my-app.tar.gz --algorithm ecdsa-p384
+```
 
 ## Ephemeral vs persistent
 
@@ -121,12 +144,12 @@ The `publicKey` field contains the base64-encoded SPKI public key. During verifi
 
 ## Multiple signatures
 
-Multiple parties can independently sign the same file. A build system signs it, then an auditor signs it — both signatures live in the same envelope:
+Multiple parties can independently sign the same file. A build system signs it, then an auditor signs it — both signatures live in the same envelope. They can even use different algorithms:
 
 ```
 sigil sign release.tar.gz --key build-key.pem --label "ci-pipeline"
-# Later, someone else:
-sigil sign release.tar.gz --key audit-key.pem --label "security-review"
+# Later, someone else with a different key type:
+sigil sign release.tar.gz --key audit-rsa-key.pem --label "security-review"
 ```
 
 Verification shows all signatures:
@@ -149,18 +172,27 @@ All signatures VERIFIED.
 **Signing payload.** What actually gets signed is:
 
 ```
-JCS-canonicalized(subject metadata) + SHA-256(file bytes)
+JCS-canonicalized(subject metadata) + SHA-256(file bytes) + JCS-canonicalized(signed attributes)
 ```
 
-This binds the signature to both the file content and its metadata (name, digests), preventing substitution attacks.
+This binds the signature to the file content, its metadata (name, digests), and all signature entry fields (algorithm, keyId, timestamp, label) — preventing substitution and replay attacks.
 
-**Crypto.** ECDSA with NIST P-256 curve. All crypto comes from .NET's built-in `System.Security.Cryptography` — zero external dependencies. Ed25519 support will be added when .NET ships the native API.
+**Crypto.** All crypto comes from .NET's built-in `System.Security.Cryptography` — zero external dependencies.
+
+| Algorithm | Name | Use case |
+|-----------|------|----------|
+| ECDSA P-256 | `ecdsa-p256` | Default. Fast, compact signatures, widely supported. |
+| ECDSA P-384 | `ecdsa-p384` | CNSA suite compliance, enterprise/government requirements. |
+| RSA-PSS | `rsa-pss-sha256` | Legacy interop, 3072-bit keys. |
+| Ed25519 | `ed25519` | Planned — waiting for .NET SDK to ship the native API. |
+
+PEM auto-detection means you never need to tell Sigil what algorithm a key uses — it parses the key's OID from the DER encoding and dispatches to the correct implementation.
 
 ## CLI reference
 
 ```
-sigil generate [-o prefix] [--passphrase "pass"]
-sigil sign <file> [--key <private.pem>] [--output path] [--label "name"] [--passphrase "pass"]
+sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
+sigil sign <file> [--key <private.pem>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name]
 sigil verify <file> [--signature path]
 ```
 
@@ -168,13 +200,16 @@ sigil verify <file> [--signature path]
 - `-o prefix` writes `prefix.pem` (private) and `prefix.pub.pem` (public)
 - Without `-o`, prints private key PEM to stdout
 - `--passphrase` encrypts the private key
+- `--algorithm` selects the signing algorithm (default: `ecdsa-p256`)
 
 **sign**: Sign a file.
 - Without `--key`: ephemeral mode (key generated in memory, discarded after signing)
-- With `--key`: persistent mode (loads private key from PEM file)
+- With `--key`: persistent mode (loads private key from PEM file, algorithm auto-detected)
+- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
 
 **verify**: Verify a file's signature.
 - Public key is extracted from the `.sig.json` — no key import needed
+- Algorithm is read from the envelope — works with any supported algorithm
 
 ## What's coming
 
@@ -196,7 +231,7 @@ Or build from source:
 
 ```
 git clone <repo-url>
-cd secure
+cd <repo-name>
 dotnet build
 dotnet run --project src/Sigil.Cli -- sign somefile.txt
 ```

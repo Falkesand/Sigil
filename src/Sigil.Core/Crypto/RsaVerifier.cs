@@ -3,14 +3,14 @@ using System.Security.Cryptography;
 namespace Sigil.Crypto;
 
 /// <summary>
-/// Verifies ECDSA P-256 signatures. BCL-only, no external dependencies.
+/// Verifies RSA-PSS SHA-256 signatures. BCL-only, no external dependencies.
 /// </summary>
-public sealed class ECDsaP256Verifier : IVerifier
+public sealed class RsaVerifier : IVerifier
 {
-    private readonly ECDsa _key;
+    private readonly RSA _key;
     private bool _disposed;
 
-    public SigningAlgorithm Algorithm => SigningAlgorithm.ECDsaP256;
+    public SigningAlgorithm Algorithm => SigningAlgorithm.Rsa;
 
     public byte[] PublicKey
     {
@@ -21,25 +21,25 @@ public sealed class ECDsaP256Verifier : IVerifier
         }
     }
 
-    private ECDsaP256Verifier(ECDsa key)
+    private RsaVerifier(RSA key)
     {
         _key = key;
     }
 
-    public static ECDsaP256Verifier FromPublicKey(byte[] spki)
+    public static RsaVerifier FromPublicKey(byte[] spki)
     {
         ArgumentNullException.ThrowIfNull(spki);
-        var key = ECDsa.Create();
+        var key = RSA.Create();
         key.ImportSubjectPublicKeyInfo(spki, out _);
-        return new ECDsaP256Verifier(key);
+        return new RsaVerifier(key);
     }
 
-    public static ECDsaP256Verifier FromPublicKeyPem(string pem)
+    public static RsaVerifier FromPublicKeyPem(string pem)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pem);
-        var key = ECDsa.Create();
+        var key = RSA.Create();
         key.ImportFromPem(pem);
-        return new ECDsaP256Verifier(key);
+        return new RsaVerifier(key);
     }
 
     public bool Verify(byte[] data, byte[] signature)
@@ -47,7 +47,7 @@ public sealed class ECDsaP256Verifier : IVerifier
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(data);
         ArgumentNullException.ThrowIfNull(signature);
-        return _key.VerifyData(data, signature, HashAlgorithmName.SHA256);
+        return _key.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
     }
 
     public void Dispose()
