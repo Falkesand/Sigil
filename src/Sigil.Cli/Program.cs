@@ -3,7 +3,7 @@ using System.CommandLine;
 
 var rootCommand = new RootCommand("Sign and verify software artifacts with distributed trust");
 
-rootCommand.Add(KeysCommand.Create());
+rootCommand.Add(GenerateCommand.Create());
 rootCommand.Add(SignCommand.Create());
 rootCommand.Add(VerifyCommand.Create());
 

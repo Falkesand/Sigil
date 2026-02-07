@@ -1,5 +1,4 @@
 using System.CommandLine;
-using Sigil.Keys;
 using Sigil.Signing;
 
 namespace Sigil.Cli.Commands;
@@ -35,9 +34,8 @@ public static class VerifyCommand
 
             var sigJson = File.ReadAllText(signaturePath);
             var envelope = ArtifactSigner.Deserialize(sigJson);
-            var store = KeyStore.Default();
 
-            var result = SignatureValidator.Verify(artifact.FullName, envelope, store);
+            var result = SignatureValidator.Verify(artifact.FullName, envelope);
 
             if (!result.ArtifactDigestMatch)
             {

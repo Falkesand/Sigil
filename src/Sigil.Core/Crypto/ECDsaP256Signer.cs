@@ -48,6 +48,23 @@ public sealed class ECDsaP256Signer : ISigner
         return new ECDsaP256Signer(key);
     }
 
+    public static ECDsaP256Signer FromPem(string pem)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pem);
+        var key = ECDsa.Create();
+        key.ImportFromPem(pem);
+        return new ECDsaP256Signer(key);
+    }
+
+    public static ECDsaP256Signer FromEncryptedPem(string pem, string passphrase)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pem);
+        ArgumentException.ThrowIfNullOrWhiteSpace(passphrase);
+        var key = ECDsa.Create();
+        key.ImportFromEncryptedPem(pem, passphrase);
+        return new ECDsaP256Signer(key);
+    }
+
     public byte[] Sign(byte[] data)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

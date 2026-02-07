@@ -37,6 +37,9 @@ public sealed class SignatureEntry
     [JsonPropertyName("algorithm")]
     public required string Algorithm { get; init; }
 
+    [JsonPropertyName("publicKey")]
+    public required string PublicKey { get; init; }
+
     [JsonPropertyName("value")]
     public required string Value { get; init; }
 

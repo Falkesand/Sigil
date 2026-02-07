@@ -6,9 +6,9 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
 
 Sigil lets you **sign files** and **verify signatures**. That's it.
 
-- You generate a key pair
-- You sign a file — Sigil produces a small `.sig.json` file next to it
-- Anyone with your public key can verify the file hasn't been tampered with
+- Sign a file — Sigil produces a small `.sig.json` file next to it
+- Anyone can verify the file hasn't been tampered with — the public key is embedded in the envelope
+- No key store, no import/export, no hidden state
 
 It works with any file: binaries, SBOMs, container images, config files, tarballs — anything.
 
@@ -20,34 +20,79 @@ It works with any file: binaries, SBOMs, container images, config files, tarball
 | Needs internet | No | Yes | No | Depends |
 | Stores your email | No | Yes (public log) | Optional | Yes |
 | External dependencies | Zero | Many | Many | Many |
-| Key management | Simple files | Ephemeral | Complex | Complex |
+| Key management | None (ephemeral) or PEM files | Ephemeral | Complex | Complex |
 | Works offline | Yes | No | Yes | Partial |
+| Hidden state on disk | None | None | `~/.gnupg/` | Varies |
 
 Sigil is for people who want to sign things **without asking permission from a cloud service**.
 
 ## Quick start
 
-### Generate a key
+### Sign a file (ephemeral — zero setup)
 
 ```
-sigil keys generate --label "my-key"
+sigil sign my-app.tar.gz
+```
+
+That's it. No key generation needed. A key pair is created in memory, the file is signed, and the private key is discarded. This proves the file hasn't been tampered with since signing.
+
+Output:
+```
+Signed: my-app.tar.gz
+Key: sha256:9c8b0e1d9d9c...
+Mode: ephemeral (key not persisted)
+Signature: my-app.tar.gz.sig.json
+```
+
+### Verify a file
+
+```
+sigil verify my-app.tar.gz
 ```
 
 Output:
 ```
-Key generated: sha256:9c8b0e1d9d9cd9e2...
-Label: my-key
+Artifact: my-app.tar.gz
+Digests: MATCH
+  [VERIFIED] sha256:9c8b0e1d...
+
+All signatures VERIFIED.
 ```
 
-Your keys live in `~/.sigil/keys/`. The private key stays on your machine.
+No key import needed — the public key is embedded in the `.sig.json` envelope.
 
-### Sign a file
+If someone tampers with the file:
 
 ```
-sigil sign my-app.tar.gz --key 9c8b0e
+FAILED: Artifact digest mismatch — file has been modified.
 ```
 
-This creates `my-app.tar.gz.sig.json` — a detached signature envelope:
+### Sign with a persistent key (for identity)
+
+When you need a stable identity across signatures:
+
+```
+sigil generate -o mykey
+sigil sign my-app.tar.gz --key mykey.pem
+```
+
+Same fingerprint every time. This enables trust — others can verify that you (specifically) signed something.
+
+## Ephemeral vs persistent
+
+| | Ephemeral (default) | Persistent (`--key`) |
+|---|---|---|
+| Setup | None | `sigil generate -o keyname` |
+| Identity proof | No (different key each time) | Yes (stable fingerprint) |
+| Integrity proof | Yes | Yes |
+| MITM protection | No (attacker can re-sign) | Yes (with trusted fingerprint) |
+| Key management | None | User manages PEM file |
+| CI/CD | Just works | Mount PEM file |
+| Trust bundles (Phase 2) | Not useful | Yes |
+
+## Envelope format
+
+The `.sig.json` envelope is a self-contained, detached signature:
 
 ```json
 {
@@ -63,56 +108,25 @@ This creates `my-app.tar.gz.sig.json` — a detached signature envelope:
     {
       "keyId": "sha256:9c8b0e1d...",
       "algorithm": "ecdsa-p256",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...",
       "value": "base64...",
-      "timestamp": "2026-02-07T14:30:00Z"
+      "timestamp": "2026-02-07T14:30:00Z",
+      "label": "ci-pipeline"
     }
   ]
 }
 ```
 
-### Verify a file
-
-```
-sigil verify my-app.tar.gz
-```
-
-Output:
-```
-Artifact: my-app.tar.gz
-Digests: MATCH
-  [VERIFIED] sha256:9c8b0e1d... (my-key)
-
-All signatures VERIFIED.
-```
-
-If someone tampers with the file:
-
-```
-FAILED: Artifact digest mismatch — file has been modified.
-```
-
-### Share your public key
-
-```
-sigil keys export 9c8b0e > my-key.pub.pem
-```
-
-Someone else imports it:
-
-```
-sigil keys import my-key.pub.pem --label "alice"
-```
-
-Now they can verify files you signed.
+The `publicKey` field contains the base64-encoded SPKI public key. During verification, Sigil computes the fingerprint of this key and checks it matches `keyId` — preventing public key substitution.
 
 ## Multiple signatures
 
 Multiple parties can independently sign the same file. A build system signs it, then an auditor signs it — both signatures live in the same envelope:
 
 ```
-sigil sign release.tar.gz --key build-key --label "ci-pipeline"
+sigil sign release.tar.gz --key build-key.pem --label "ci-pipeline"
 # Later, someone else:
-sigil sign release.tar.gz --key audit-key --label "security-review"
+sigil sign release.tar.gz --key audit-key.pem --label "security-review"
 ```
 
 Verification shows all signatures:
@@ -130,7 +144,7 @@ All signatures VERIFIED.
 
 **Identity = Key pair.** Your key fingerprint (SHA-256 of the public key) is your identity. No email, no username, no account.
 
-**Signatures are detached.** Sigil never modifies your files. It produces a separate `.sig.json` envelope containing the file's digests and cryptographic signatures.
+**Signatures are detached.** Sigil never modifies your files. It produces a separate `.sig.json` envelope containing the file's digests, the public key, and the cryptographic signature.
 
 **Signing payload.** What actually gets signed is:
 
@@ -142,38 +156,25 @@ This binds the signature to both the file content and its metadata (name, digest
 
 **Crypto.** ECDSA with NIST P-256 curve. All crypto comes from .NET's built-in `System.Security.Cryptography` — zero external dependencies. Ed25519 support will be added when .NET ships the native API.
 
-## Key management
-
-Keys are stored as standard PEM files:
-
-```
-~/.sigil/
-  keys/
-    sha256_<fingerprint>/
-      public.pem       # Standard SubjectPublicKeyInfo
-      private.pem      # PKCS#8 (encrypted if passphrase set)
-      metadata.json    # Algorithm, label, creation date
-```
-
-Encrypt your private key with a passphrase:
-
-```
-sigil keys generate --label "production" --passphrase
-```
-
 ## CLI reference
 
 ```
-sigil keys generate [--label "name"] [--passphrase "pass"]
-sigil keys list
-sigil keys export <fingerprint>
-sigil keys import <file> [--label "name"]
-
-sigil sign <file> --key <fingerprint> [--output path] [--label "name"]
+sigil generate [-o prefix] [--passphrase "pass"]
+sigil sign <file> [--key <private.pem>] [--output path] [--label "name"] [--passphrase "pass"]
 sigil verify <file> [--signature path]
 ```
 
-Fingerprints support prefix matching — you only need enough characters to be unambiguous (e.g., `9c8b0e` instead of the full 71-character fingerprint).
+**generate**: Create a key pair for persistent signing.
+- `-o prefix` writes `prefix.pem` (private) and `prefix.pub.pem` (public)
+- Without `-o`, prints private key PEM to stdout
+- `--passphrase` encrypts the private key
+
+**sign**: Sign a file.
+- Without `--key`: ephemeral mode (key generated in memory, discarded after signing)
+- With `--key`: persistent mode (loads private key from PEM file)
+
+**verify**: Verify a file's signature.
+- Public key is extracted from the `.sig.json` — no key import needed
 
 ## What's coming
 
@@ -197,7 +198,7 @@ Or build from source:
 git clone <repo-url>
 cd secure
 dotnet build
-dotnet run --project src/Sigil.Cli -- keys generate
+dotnet run --project src/Sigil.Cli -- sign somefile.txt
 ```
 
 ## License

@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Org.Webpki.JsonCanonicalizer;
 using Sigil.Crypto;
@@ -54,6 +53,7 @@ public static class ArtifactSigner
 
     /// <summary>
     /// Appends a new signature to an existing envelope.
+    /// The signer's public key is embedded in the signature entry for self-contained verification.
     /// </summary>
     public static void AppendSignature(
         SignatureEnvelope envelope,
@@ -66,16 +66,23 @@ public static class ArtifactSigner
         ArgumentNullException.ThrowIfNull(artifactBytes);
         ArgumentNullException.ThrowIfNull(signer);
 
-        // Build the canonical payload to sign: subject descriptor (JCS-canonicalized) + artifact digest
-        var payloadToSign = BuildSigningPayload(envelope.Subject, artifactBytes);
+        // Compute all metadata before signing so it's included in the payload
+        var algorithm = signer.Algorithm.ToCanonicalName();
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ",
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        var payloadToSign = BuildSigningPayload(
+            envelope.Subject, artifactBytes, envelope.Version,
+            fingerprint.Value, algorithm, timestamp, label);
         var signatureBytes = signer.Sign(payloadToSign);
 
         var entry = new SignatureEntry
         {
             KeyId = fingerprint.Value,
-            Algorithm = signer.Algorithm.ToCanonicalName(),
+            Algorithm = algorithm,
+            PublicKey = Convert.ToBase64String(signer.PublicKey),
             Value = Convert.ToBase64String(signatureBytes),
-            Timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture),
+            Timestamp = timestamp,
             Label = label
         };
 
@@ -101,18 +108,42 @@ public static class ArtifactSigner
 
     /// <summary>
     /// Builds the canonical payload that gets signed:
-    /// JCS(subject) concatenated with the raw artifact bytes' SHA-256 digest.
-    /// This binds the signature to both the subject metadata and the artifact content.
+    /// JCS(subject) + SHA-256(artifact bytes) + JCS(signed attributes).
+    /// This binds the signature to the subject metadata, artifact content,
+    /// and all signature entry metadata (preventing timestamp/label tampering).
     /// </summary>
-    internal static byte[] BuildSigningPayload(SubjectDescriptor subject, byte[] artifactBytes)
+    internal static byte[] BuildSigningPayload(
+        SubjectDescriptor subject,
+        byte[] artifactBytes,
+        string version,
+        string keyId,
+        string algorithm,
+        string timestamp,
+        string? label)
     {
         var subjectJson = JsonSerializer.Serialize(subject);
-        var canonicalized = new JsonCanonicalizer(subjectJson).GetEncodedUTF8();
+        var canonicalizedSubject = new JsonCanonicalizer(subjectJson).GetEncodedUTF8();
         var artifactDigest = HashAlgorithms.Sha256(artifactBytes);
 
-        var payload = new byte[canonicalized.Length + artifactDigest.Length];
-        Buffer.BlockCopy(canonicalized, 0, payload, 0, canonicalized.Length);
-        Buffer.BlockCopy(artifactDigest, 0, payload, canonicalized.Length, artifactDigest.Length);
+        // Signed attributes: everything that should be tamper-proof
+        var signedAttrs = new Dictionary<string, string>
+        {
+            ["algorithm"] = algorithm,
+            ["keyId"] = keyId,
+            ["timestamp"] = timestamp,
+            ["version"] = version
+        };
+        if (label is not null)
+            signedAttrs["label"] = label;
+
+        var attrsJson = JsonSerializer.Serialize(signedAttrs);
+        var canonicalizedAttrs = new JsonCanonicalizer(attrsJson).GetEncodedUTF8();
+
+        var payload = new byte[canonicalizedSubject.Length + artifactDigest.Length + canonicalizedAttrs.Length];
+        Buffer.BlockCopy(canonicalizedSubject, 0, payload, 0, canonicalizedSubject.Length);
+        Buffer.BlockCopy(artifactDigest, 0, payload, canonicalizedSubject.Length, artifactDigest.Length);
+        Buffer.BlockCopy(canonicalizedAttrs, 0, payload,
+            canonicalizedSubject.Length + artifactDigest.Length, canonicalizedAttrs.Length);
         return payload;
     }
 }

@@ -29,6 +29,7 @@ public sealed class VerificationResult
 /// <summary>
 /// Cryptographic verification of signature envelopes.
 /// Layer 2: pure math — no trust decisions.
+/// Public keys are extracted from the envelope itself — no external key store needed.
 /// </summary>
 public static class SignatureValidator
 {
@@ -37,18 +38,16 @@ public static class SignatureValidator
     /// </summary>
     public static VerificationResult Verify(
         string artifactPath,
-        SignatureEnvelope envelope,
-        KeyStore keyStore)
+        SignatureEnvelope envelope)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(artifactPath);
         ArgumentNullException.ThrowIfNull(envelope);
-        ArgumentNullException.ThrowIfNull(keyStore);
 
         if (!File.Exists(artifactPath))
             throw new FileNotFoundException("Artifact not found.", artifactPath);
 
         var fileBytes = File.ReadAllBytes(artifactPath);
-        return Verify(fileBytes, envelope, keyStore);
+        return Verify(fileBytes, envelope);
     }
 
     /// <summary>
@@ -56,12 +55,10 @@ public static class SignatureValidator
     /// </summary>
     public static VerificationResult Verify(
         byte[] artifactBytes,
-        SignatureEnvelope envelope,
-        KeyStore keyStore)
+        SignatureEnvelope envelope)
     {
         ArgumentNullException.ThrowIfNull(artifactBytes);
         ArgumentNullException.ThrowIfNull(envelope);
-        ArgumentNullException.ThrowIfNull(keyStore);
 
         // Step 1: Verify artifact digests match
         var (sha256, sha512) = HashAlgorithms.ComputeDigests(artifactBytes);
@@ -72,13 +69,12 @@ public static class SignatureValidator
         if (envelope.Subject.Digests.TryGetValue("sha512", out var expectedSha512))
             digestMatch &= string.Equals(sha512, expectedSha512, StringComparison.OrdinalIgnoreCase);
 
-        // Step 2: Verify each signature
+        // Step 2: Verify each signature using the embedded public key
         var sigResults = new List<SignatureVerificationResult>();
-        var signingPayload = ArtifactSigner.BuildSigningPayload(envelope.Subject, artifactBytes);
 
         foreach (var sig in envelope.Signatures)
         {
-            sigResults.Add(VerifySingleSignature(sig, signingPayload, keyStore));
+            sigResults.Add(VerifySingleSignature(sig, envelope.Subject, artifactBytes, envelope.Version));
         }
 
         return new VerificationResult
@@ -90,25 +86,46 @@ public static class SignatureValidator
 
     private static SignatureVerificationResult VerifySingleSignature(
         SignatureEntry sig,
-        byte[] signingPayload,
-        KeyStore keyStore)
+        SubjectDescriptor subject,
+        byte[] artifactBytes,
+        string version)
     {
         try
         {
-            var fingerprint = KeyFingerprint.Parse(sig.KeyId);
-
-            if (!keyStore.KeyExists(fingerprint))
+            if (string.IsNullOrEmpty(sig.PublicKey))
             {
                 return new SignatureVerificationResult
                 {
                     KeyId = sig.KeyId,
                     IsValid = false,
                     Label = sig.Label,
-                    Error = "Public key not found in key store."
+                    Error = "Public key not found in signature entry."
                 };
             }
 
-            var verifier = keyStore.LoadVerifier(fingerprint);
+            // Decode the embedded public key
+            var spkiBytes = Convert.FromBase64String(sig.PublicKey);
+
+            // Verify fingerprint matches keyId (integrity check)
+            var computedFingerprint = KeyFingerprint.Compute(spkiBytes);
+            if (computedFingerprint.Value != sig.KeyId)
+            {
+                return new SignatureVerificationResult
+                {
+                    KeyId = sig.KeyId,
+                    IsValid = false,
+                    Label = sig.Label,
+                    Error = "Public key fingerprint does not match keyId."
+                };
+            }
+
+            // Rebuild the signing payload using the entry's metadata
+            var signingPayload = ArtifactSigner.BuildSigningPayload(
+                subject, artifactBytes, version,
+                sig.KeyId, sig.Algorithm, sig.Timestamp, sig.Label);
+
+            // Create verifier from the embedded SPKI and verify
+            var verifier = ECDsaP256Verifier.FromPublicKey(spkiBytes);
             var signatureBytes = Convert.FromBase64String(sig.Value);
             var isValid = verifier.Verify(signingPayload, signatureBytes);
 
