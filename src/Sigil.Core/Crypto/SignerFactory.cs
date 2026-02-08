@@ -28,6 +28,18 @@ public static class SignerFactory
     /// SEC1 EC keys (BEGIN EC PRIVATE KEY), and PKCS#1 RSA keys (BEGIN RSA PRIVATE KEY).
     /// </summary>
     public static ISigner CreateFromPem(ReadOnlySpan<char> pem, ReadOnlySpan<char> passphrase = default)
+        => CreateFromPem(pem, passphrase, algorithmHint: null);
+
+    /// <summary>
+    /// Creates a signer from a PEM-encoded private key with an optional algorithm hint.
+    /// When a hint is provided for encrypted PEMs, the factory dispatches directly to the
+    /// correct algorithm without trial-and-error, providing clearer error messages.
+    /// For unencrypted PEMs, the hint is ignored (OID-based detection is deterministic).
+    /// </summary>
+    public static ISigner CreateFromPem(
+        ReadOnlySpan<char> pem,
+        ReadOnlySpan<char> passphrase,
+        SigningAlgorithm? algorithmHint)
     {
         if (pem.IsEmpty || pem.IsWhiteSpace())
             throw new ArgumentException("Value cannot be null or whitespace.", nameof(pem));
@@ -35,9 +47,13 @@ public static class SignerFactory
         bool isEncrypted = pem.IndexOf("ENCRYPTED".AsSpan()) >= 0;
 
         if (isEncrypted)
-            return CreateFromEncryptedPem(pem, passphrase);
+        {
+            return algorithmHint.HasValue
+                ? CreateFromEncryptedPemWithHint(pem, passphrase, algorithmHint.Value)
+                : CreateFromEncryptedPem(pem, passphrase);
+        }
 
-        // Check PEM label for quick routing
+        // Unencrypted: ignore hint, use deterministic detection
         if (pem.IndexOf("BEGIN EC PRIVATE KEY".AsSpan()) >= 0)
             return CreateEcSignerFromPem(pem);
 
@@ -97,22 +113,43 @@ public static class SignerFactory
         };
     }
 
+    private static ISigner CreateFromEncryptedPemWithHint(
+        ReadOnlySpan<char> pem,
+        ReadOnlySpan<char> passphrase,
+        SigningAlgorithm algorithm)
+    {
+        if (passphrase.IsEmpty || passphrase.IsWhiteSpace())
+            throw new ArgumentException("Passphrase required for encrypted PEM.", nameof(passphrase));
+
+        return algorithm switch
+        {
+            SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.FromEncryptedPem(pem, passphrase),
+            SigningAlgorithm.ECDsaP384 => ECDsaP384Signer.FromEncryptedPem(pem, passphrase),
+            SigningAlgorithm.Rsa => RsaSigner.FromEncryptedPem(pem, passphrase),
+            SigningAlgorithm.Ed25519 => throw new NotSupportedException(
+                "Ed25519 is not yet available in this .NET SDK."),
+            SigningAlgorithm.MLDsa65 => MLDsa65Signer.FromEncryptedPem(pem, passphrase),
+            _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
+        };
+    }
+
     private static ISigner CreateFromEncryptedPem(ReadOnlySpan<char> pem, ReadOnlySpan<char> passphrase)
     {
         if (passphrase.IsEmpty || passphrase.IsWhiteSpace())
             throw new ArgumentException("Passphrase required for encrypted PEM.", nameof(passphrase));
 
         // Encrypted PKCS#8 — can't parse OID without decrypting.
-        // Try ECDsa first (most common), then RSA.
+        // Try ECDsa first (most common), then RSA, then ML-DSA-65.
+        // Collect exceptions to distinguish wrong passphrase from unsupported algorithm.
+        // Note: Successful probe requires re-import (double PBKDF2). Use algorithm hint to avoid.
+        var exceptions = new List<Exception>(3);
+
         try
         {
-            var ecKey = ECDsa.Create();
+            using var ecKey = ECDsa.Create();
             ecKey.ImportFromEncryptedPem(pem, passphrase);
             var parameters = ecKey.ExportParameters(false);
             var curveName = parameters.Curve.Oid?.FriendlyName;
-
-            // Dispose the temp key — re-import into the correct type
-            ecKey.Dispose();
 
             return curveName switch
             {
@@ -121,29 +158,45 @@ public static class SignerFactory
                 _ => throw new NotSupportedException($"Unsupported EC curve: {curveName}")
             };
         }
-        catch (CryptographicException)
+        catch (CryptographicException ex)
         {
-            // Not an EC key — try RSA
+            exceptions.Add(ex);
         }
 
         try
         {
             return RsaSigner.FromEncryptedPem(pem, passphrase);
         }
-        catch (CryptographicException)
+        catch (CryptographicException ex)
         {
-            // Not RSA either
+            exceptions.Add(ex);
         }
 
         try
         {
             return MLDsa65Signer.FromEncryptedPem(pem, passphrase);
         }
-        catch (CryptographicException)
+        catch (CryptographicException ex)
         {
-            // Not ML-DSA either
+            exceptions.Add(ex);
+        }
+        catch (PlatformNotSupportedException ex)
+        {
+            exceptions.Add(ex);
         }
 
-        throw new NotSupportedException("Could not detect algorithm from encrypted PEM. Supported: ECDSA P-256, P-384, RSA, ML-DSA-65.");
+        // If all CryptographicExceptions have the same message, it's a passphrase issue —
+        // PBES2 decryption fails identically regardless of target algorithm.
+        var cryptoExceptions = exceptions.OfType<CryptographicException>().ToList();
+        if (cryptoExceptions.Count >= 2 &&
+            cryptoExceptions.All(e => e.Message == cryptoExceptions[0].Message))
+        {
+            throw new CryptographicException(
+                "Could not decrypt the private key. Verify the passphrase is correct.",
+                cryptoExceptions[0]);
+        }
+
+        throw new NotSupportedException(
+            "Could not detect algorithm from encrypted PEM. Supported: ECDSA P-256, P-384, RSA, ML-DSA-65.");
     }
 }

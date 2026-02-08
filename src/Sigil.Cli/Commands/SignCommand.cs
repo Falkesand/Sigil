@@ -18,7 +18,7 @@ public static class SignCommand
         var outputOption = new Option<string?>("--output") { Description = "Output path for the signature file" };
         var labelOption = new Option<string?>("--label") { Description = "Label for this signature" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the signing key is encrypted" };
-        var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm for ephemeral mode (ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65)" };
+        var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ephemeral default: ecdsa-p256; also used as hint for encrypted PEM detection)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
 
@@ -39,7 +39,7 @@ public static class SignCommand
             var output = parseResult.GetValue(outputOption);
             var label = parseResult.GetValue(labelOption);
             var passphrase = parseResult.GetValue(passphraseOption);
-            var algorithmName = parseResult.GetValue(algorithmOption) ?? "ecdsa-p256";
+            var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
 
@@ -121,6 +121,22 @@ public static class SignCommand
                         return;
                     }
 
+                    // Parse algorithm hint if provided
+                    SigningAlgorithm? algorithmHint = null;
+                    if (algorithmName is not null)
+                    {
+                        try
+                        {
+                            algorithmHint = SigningAlgorithmExtensions.ParseAlgorithm(algorithmName);
+                        }
+                        catch (ArgumentException)
+                        {
+                            Console.Error.WriteLine($"Unknown algorithm: {algorithmName}");
+                            Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
+                            return;
+                        }
+                    }
+
                     byte[] pemBytes = File.ReadAllBytes(keyPath);
                     char[] pemChars = Encoding.UTF8.GetChars(pemBytes);
                     try
@@ -133,12 +149,17 @@ public static class SignCommand
                                 Console.Error.WriteLine("Key is encrypted. Provide --passphrase.");
                                 return;
                             }
-                            localSigner = SignerFactory.CreateFromPem(pemChars, passphraseChars);
+                            localSigner = SignerFactory.CreateFromPem(pemChars, passphraseChars, algorithmHint);
                         }
                         else
                         {
                             localSigner = SignerFactory.CreateFromPem(pemChars);
                         }
+                    }
+                    catch (CryptographicException ex)
+                    {
+                        Console.Error.WriteLine($"Failed to load key: {ex.Message}");
+                        return;
                     }
                     finally
                     {
@@ -151,14 +172,15 @@ public static class SignCommand
                 else
                 {
                     // Ephemeral mode: generate key in memory
+                    var ephemeralAlgorithmName = algorithmName ?? "ecdsa-p256";
                     SigningAlgorithm algorithm;
                     try
                     {
-                        algorithm = SigningAlgorithmExtensions.ParseAlgorithm(algorithmName);
+                        algorithm = SigningAlgorithmExtensions.ParseAlgorithm(ephemeralAlgorithmName);
                     }
                     catch (ArgumentException)
                     {
-                        Console.Error.WriteLine($"Unknown algorithm: {algorithmName}");
+                        Console.Error.WriteLine($"Unknown algorithm: {ephemeralAlgorithmName}");
                         Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
                         return;
                     }
