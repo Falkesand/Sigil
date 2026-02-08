@@ -5,7 +5,7 @@
     <RootNamespace>Sigil.Cli</RootNamespace>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>sigil</ToolCommandName>
-    <PackageId>Sigil.Cli</PackageId>
+    <PackageId>Sigil.Sign</PackageId>
     <Description>CLI tool for signing and verifying software artifacts with distributed trust</Description>
   </PropertyGroup>
 
