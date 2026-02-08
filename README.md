@@ -12,7 +12,8 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Sign with a persistent key](#sign-with-a-persistent-key-for-identity)
   - [Choose your algorithm](#choose-your-algorithm)
   - [Sign an SBOM](#sign-an-sbom)
-- [Ephemeral vs persistent](#ephemeral-vs-persistent)
+  - [Sign with a vault key](#sign-with-a-vault-key)
+- [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
 - [How it works](#how-it-works)
@@ -25,12 +26,18 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Viewing a bundle](#viewing-a-bundle)
   - [How trust evaluation works](#how-trust-evaluation-works)
   - [Trust bundle format](#trust-bundle-format)
+- [Vault-backed signing](#vault-backed-signing)
+  - [HashiCorp Vault](#hashicorp-vault)
+  - [Azure Key Vault](#azure-key-vault)
+  - [AWS KMS](#aws-kms)
+  - [Google Cloud KMS](#google-cloud-kms)
 - [Discovery](#discovery)
   - [Well-known URLs](#well-known-urls)
   - [DNS TXT records](#dns-txt-records)
   - [Git repositories](#git-repositories)
   - [Verify with discovery](#verify-with-discovery)
 - [CLI reference](#cli-reference)
+- [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
 - [Install](#install)
 - [License](#license)
@@ -53,7 +60,8 @@ It works with any file: binaries, SBOMs, container images, config files, tarball
 | Needs internet | No | Yes | No | Depends |
 | Stores your email | No | Yes (public log) | Optional | Yes |
 | External dependencies | Zero | Many | Many | Many |
-| Key management | None (ephemeral) or PEM files | Ephemeral | Complex | Complex |
+| Key management | None (ephemeral), PEM files, or vault/KMS | Ephemeral | Complex | Complex |
+| Vault/KMS support | Yes (4 providers) | No | No | Partial |
 | Works offline | Yes | No | Yes | Partial |
 | Hidden state on disk | None | None | `~/.gnupg/` | Varies |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
@@ -172,17 +180,36 @@ All signatures VERIFIED.
 
 The metadata is embedded in the signed subject, so it is tamper-proof. Non-SBOM files are signed without metadata — no behavior changes for regular files.
 
-## Ephemeral vs persistent
+### Sign with a vault key
 
-| | Ephemeral (default) | Persistent (`--key`) |
-|---|---|---|
-| Setup | None | `sigil generate -o keyname` |
-| Identity proof | No (different key each time) | Yes (stable fingerprint) |
-| Integrity proof | Yes | Yes |
-| MITM protection | No (attacker can re-sign) | Yes (with trusted fingerprint) |
-| Key management | None | User manages PEM file |
-| CI/CD | Just works | Mount PEM file |
-| Trust bundles | Not useful | Yes |
+When your private key lives in a cloud KMS or HashiCorp Vault:
+
+```
+sigil sign my-app.tar.gz --vault aws --vault-key alias/my-signing-key
+```
+
+```
+Signed: my-app.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:7f2a3b...
+Mode: vault (aws)
+Signature: my-app.tar.gz.sig.json
+```
+
+The private key never leaves the vault — only the signature is returned. Verification works identically (the public key is embedded in the envelope). See [Vault-backed signing](#vault-backed-signing) for setup details.
+
+## Ephemeral vs persistent vs vault
+
+| | Ephemeral (default) | Persistent (`--key`) | Vault (`--vault`) |
+|---|---|---|---|
+| Setup | None | `sigil generate -o keyname` | Configure vault + auth |
+| Identity proof | No (different key each time) | Yes (stable fingerprint) | Yes (stable fingerprint) |
+| Integrity proof | Yes | Yes | Yes |
+| MITM protection | No (attacker can re-sign) | Yes (with trusted fingerprint) | Yes (with trusted fingerprint) |
+| Key management | None | User manages PEM file | Vault manages key |
+| Private key exposure | In memory (discarded) | On disk (PEM file) | Never leaves vault |
+| CI/CD | Just works | Mount PEM file | IAM roles / service accounts |
+| Trust bundles | Not useful | Yes | Yes |
 
 ## Envelope format
 
@@ -550,17 +577,163 @@ The `--discover` option supports all three schemes:
 | `dns:example.com` | DNS TXT lookup |
 | `git:https://github.com/org/repo.git` | Git clone |
 
+## Vault-backed signing
+
+When private keys must never leave a hardware security module or cloud KMS, Sigil delegates signing to the vault. The private key is never exposed to the signing tool — Sigil sends a hash to the vault, receives the signature, and embeds it in the envelope. Authentication uses environment variables — no hardcoded secrets. All vault API calls have a 30-second timeout.
+
+### Supported providers
+
+| Provider | `--vault` value | Key reference format | Auth mechanism |
+|----------|----------------|----------------------|----------------|
+| HashiCorp Vault | `hashicorp` | `transit/<keyname>` or `kv/<path>` | `VAULT_TOKEN` or AppRole |
+| Azure Key Vault | `azure` | Key name or full key URL | `DefaultAzureCredential` |
+| AWS KMS | `aws` | ARN, key ID, or `alias/<name>` | AWS credential chain |
+| Google Cloud KMS | `gcp` | Full resource name | Application Default Credentials |
+
+### HashiCorp Vault
+
+HashiCorp Vault supports two backends: **Transit** (sign-in-vault) and **KV** (retrieve PEM key).
+
+**Key reference formats:**
+
+```
+transit/my-signing-key     # Transit engine (recommended)
+my-signing-key             # Transit engine (shorthand)
+kv/sigil/my-key            # KV v2 engine (expects "pem" field)
+```
+
+**Environment variables:**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VAULT_ADDR` | Yes | Vault server URL (HTTPS required except localhost) |
+| `VAULT_TOKEN` | One of | Direct token authentication |
+| `VAULT_ROLE_ID` | One of | AppRole authentication (with `VAULT_SECRET_ID`) |
+| `VAULT_SECRET_ID` | One of | AppRole authentication (with `VAULT_ROLE_ID`) |
+| `VAULT_NAMESPACE` | No | Vault namespace |
+| `VAULT_MOUNT_PATH` | No | Transit mount path (default: `transit`) |
+
+If neither `VAULT_TOKEN` nor AppRole credentials are set, Sigil falls back to `~/.vault-token`.
+
+**Example:**
+
+```bash
+# Linux / macOS
+export VAULT_ADDR=https://vault.example.com
+export VAULT_TOKEN=hvs.CAES...
+
+# Windows (PowerShell)
+$env:VAULT_ADDR = "https://vault.example.com"
+$env:VAULT_TOKEN = "hvs.CAES..."
+
+# Windows (cmd)
+set VAULT_ADDR=https://vault.example.com
+set VAULT_TOKEN=hvs.CAES...
+```
+
+```
+sigil sign release.tar.gz --vault hashicorp --vault-key transit/my-signing-key
+sigil trust sign trust.json --vault hashicorp --vault-key transit/my-signing-key -o trust-signed.json
+```
+
+### Azure Key Vault
+
+**Key reference formats:**
+
+```
+my-key                                                    # Key name (uses AZURE_KEY_VAULT_URL)
+https://myvault.vault.azure.net/keys/my-key               # Full URL (latest version)
+https://myvault.vault.azure.net/keys/my-key/abc123...      # Full URL (specific version)
+```
+
+**Environment variables:**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AZURE_KEY_VAULT_URL` | Yes | Vault URL (e.g., `https://myvault.vault.azure.net`) |
+
+Authentication uses `DefaultAzureCredential`, which tries (in order): environment variables (`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`), managed identity, workload identity, Azure CLI.
+
+**Example:**
+
+```bash
+# Linux / macOS
+export AZURE_KEY_VAULT_URL=https://myvault.vault.azure.net
+
+# Windows (PowerShell)
+$env:AZURE_KEY_VAULT_URL = "https://myvault.vault.azure.net"
+
+# Windows (cmd)
+set AZURE_KEY_VAULT_URL=https://myvault.vault.azure.net
+```
+
+```
+sigil sign release.tar.gz --vault azure --vault-key my-key
+```
+
+### AWS KMS
+
+**Key reference formats:**
+
+```
+alias/my-signing-key                                       # Key alias
+arn:aws:kms:us-east-1:123456789:key/abcd-1234-efgh         # Full ARN
+abcd-1234-efgh-5678                                        # Key ID
+```
+
+**Environment variables:**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AWS_REGION` | Yes | AWS region (e.g., `us-east-1`) |
+
+Authentication uses the standard AWS credential chain: environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`), EC2/ECS instance roles, web identity (IRSA), `~/.aws/credentials`.
+
+**Example:**
+
+```bash
+# Linux / macOS
+export AWS_REGION=us-east-1
+
+# Windows (PowerShell)
+$env:AWS_REGION = "us-east-1"
+
+# Windows (cmd)
+set AWS_REGION=us-east-1
+```
+
+```
+sigil sign release.tar.gz --vault aws --vault-key alias/my-signing-key
+```
+
+### Google Cloud KMS
+
+**Key reference format:**
+
+```
+projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
+```
+
+Authentication uses Application Default Credentials: `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON), `gcloud auth application-default login`, Compute Engine / Cloud Run service account.
+
+**Example:**
+
+```
+sigil sign release.tar.gz --vault gcp \
+  --vault-key projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
+```
+
 ## CLI reference
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
-sigil sign <file> [--key <private.pem>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name]
+sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name]
 sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri]
 sigil trust create --name <name> [-o path] [--description "text"]
 sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
 sigil trust remove <bundle> --fingerprint <fp>
 sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
-sigil trust sign <bundle> --key <private.pem> [-o path] [--passphrase "pass"]
+sigil trust sign <bundle> --key <private.pem> | --vault <provider> --vault-key <reference> [-o path] [--passphrase "pass"]
 sigil trust show <bundle>
 sigil discover well-known <domain> [-o path]
 sigil discover dns <domain> [-o path]
@@ -573,9 +746,11 @@ sigil discover git <url> [-o path]
 - `--passphrase` encrypts the private key
 - `--algorithm` selects the signing algorithm (default: `ecdsa-p256`)
 
-**sign**: Sign a file.
-- Without `--key`: ephemeral mode (key generated in memory, discarded after signing)
+**sign**: Sign a file. Three signing modes:
+- Without `--key` or `--vault`: ephemeral mode (key generated in memory, discarded after signing)
 - With `--key`: persistent mode (loads private key from PEM file, algorithm auto-detected)
+- With `--vault` and `--vault-key`: vault mode (private key never leaves the vault)
+- `--vault` and `--key` are mutually exclusive
 - `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
 - SBOM format is auto-detected for CycloneDX and SPDX JSON files
 
@@ -593,7 +768,7 @@ sigil discover git <url> [-o path]
 
 **trust endorse**: Add an endorsement ("Key A vouches for Key B") to an unsigned bundle.
 
-**trust sign**: Sign a bundle with an authority key. This locks the bundle — modifications require re-signing.
+**trust sign**: Sign a bundle with an authority key. Either `--key` or `--vault`/`--vault-key` is required (mutually exclusive). This locks the bundle — modifications require re-signing.
 
 **trust show**: Display the contents of a trust bundle (keys, endorsements, signature status).
 
@@ -603,6 +778,114 @@ sigil discover git <url> [-o path]
 
 **discover git**: Shallow-clone a git repository and read `.sigil/trust.json` or `trust.json`. Use `#branch` in the URL for a specific branch or tag.
 
+## Dotnet tool reference
+
+Sigil is distributed as a [.NET tool](https://learn.microsoft.com/en-us/dotnet/core/tools/global-tools). The NuGet package is `Sigil.Sign`.
+
+```
+dotnet tool install --global Sigil.Sign
+```
+
+**Install globally** — available as `sigil` from any directory:
+
+```
+dotnet tool install --global Sigil.Sign
+```
+
+**Install as a local tool** — scoped to a repository, tracked in a manifest file:
+
+```
+dotnet new tool-manifest                    # creates .config/dotnet-tools.json (once per repo)
+dotnet tool install Sigil.Sign              # adds sigil to the manifest
+dotnet tool restore                         # restores tools on a fresh clone
+dotnet sigil sign my-app.tar.gz             # run via 'dotnet sigil' instead of 'sigil'
+```
+
+**Update** to the latest version:
+
+```
+dotnet tool update --global Sigil.Sign      # global
+dotnet tool update Sigil.Sign               # local
+```
+
+**Uninstall**:
+
+```
+dotnet tool uninstall --global Sigil.Sign   # global
+dotnet tool uninstall Sigil.Sign            # local
+```
+
+**Check installed version**:
+
+```
+dotnet tool list --global                   # shows all global tools
+dotnet tool list                            # shows local tools for current repo
+```
+
+| | Global | Local |
+|---|---|---|
+| Command | `sigil` | `dotnet sigil` |
+| Scope | Machine-wide | Per-repository |
+| Tracked in source | No | Yes (`.config/dotnet-tools.json`) |
+| CI/CD restore | Not needed | `dotnet tool restore` |
+| Multiple versions | No | Yes (different repos, different versions) |
+
+### Usage examples (local tool)
+
+When installed as a local tool, prefix all commands with `dotnet`. The arguments are identical to the CLI reference above.
+
+**Sign and verify:**
+
+```
+dotnet sigil sign my-app.tar.gz
+dotnet sigil verify my-app.tar.gz
+```
+
+**Generate keys and sign with a persistent key:**
+
+```
+dotnet sigil generate -o mykey
+dotnet sigil sign my-app.tar.gz --key mykey.pem
+```
+
+**Sign with a vault key:**
+
+```
+dotnet sigil sign my-app.tar.gz --vault aws --vault-key alias/my-signing-key
+```
+
+**Trust bundles:**
+
+```
+dotnet sigil trust create --name "my-project" -o trust.json
+dotnet sigil trust add trust.json --fingerprint sha256:abc123... --name "CI Key"
+dotnet sigil trust sign trust.json --key authority.pem -o trust-signed.json
+dotnet sigil verify release.tar.gz --trust-bundle trust-signed.json --authority sha256:def456...
+```
+
+**Discovery:**
+
+```
+dotnet sigil discover well-known example.com -o trust.json
+dotnet sigil verify release.tar.gz --discover example.com
+```
+
+### CI/CD example
+
+A typical GitHub Actions workflow using the local tool:
+
+```yaml
+- uses: actions/setup-dotnet@v4
+  with:
+    dotnet-version: '10.0.x'
+
+- run: dotnet tool restore
+
+- run: dotnet sigil sign my-app.tar.gz --key ${{ runner.temp }}/signing-key.pem --label "ci-pipeline"
+
+- run: dotnet sigil verify my-app.tar.gz
+```
+
 ## What's coming
 
 - **Ed25519** — When the .NET SDK ships the native API.
@@ -611,8 +894,16 @@ sigil discover git <url> [-o path]
 
 Requires [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
+Install as a global dotnet tool from NuGet:
+
 ```
-dotnet tool install --global Sigil.Cli
+dotnet tool install --global Sigil.Sign
+```
+
+Update to the latest version:
+
+```
+dotnet tool update --global Sigil.Sign
 ```
 
 Or build from source:
@@ -627,4 +918,4 @@ dotnet run --project src/Sigil.Cli -- sign somefile.txt
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE) — free to use, modify, and distribute. If you distribute a modified version, you must release your source under the same license.

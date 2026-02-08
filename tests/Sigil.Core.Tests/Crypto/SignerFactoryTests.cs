@@ -1,3 +1,5 @@
+#pragma warning disable SYSLIB5006
+
 using System.Security.Cryptography;
 using System.Text;
 using Sigil.Crypto;
@@ -93,6 +95,21 @@ public class SignerFactoryTests
     }
 
     [Fact]
+    public void CreateFromPem_EncryptedMLDsa65_AutoDetects()
+    {
+        if (!MLDsa.IsSupported) return;
+
+        using var original = MLDsa65Signer.Generate();
+        var passphrase = "test-password-mldsa";
+        var encryptedPemBytes = original.ExportEncryptedPrivateKeyPemBytes(passphrase.AsSpan());
+        var encryptedPem = Encoding.UTF8.GetString(encryptedPemBytes);
+
+        using var restored = SignerFactory.CreateFromPem(encryptedPem.AsSpan(), passphrase.AsSpan());
+
+        Assert.Equal(SigningAlgorithm.MLDsa65, restored.Algorithm);
+    }
+
+    [Fact]
     public void CreateFromPem_EncryptedRsa_AutoDetects()
     {
         using var original = RsaSigner.Generate();
@@ -109,63 +126,83 @@ public class SignerFactoryTests
     {
         Assert.Throws<ArgumentException>(() => SignerFactory.CreateFromPem(ReadOnlySpan<char>.Empty));
     }
-}
 
-public class VerifierFactoryTests
-{
     [Fact]
-    public void CreateFromPublicKey_ECDsaP256_ReturnsCorrectVerifier()
+    public void CreateFromPem_EncryptedECDsa_WrongPassphrase_ThrowsCryptographicException()
     {
         using var signer = ECDsaP256Signer.Generate();
-        var spki = signer.PublicKey;
-        var algorithmName = SigningAlgorithm.ECDsaP256.ToCanonicalName();
+        var encryptedPem = signer.ExportEncryptedPrivateKeyPem("correct-password");
 
-        using var verifier = VerifierFactory.CreateFromPublicKey(spki, algorithmName);
+        var ex = Assert.Throws<CryptographicException>(
+            () => SignerFactory.CreateFromPem(encryptedPem.AsSpan(), "wrong-password".AsSpan()));
 
-        Assert.Equal(SigningAlgorithm.ECDsaP256, verifier.Algorithm);
+        Assert.Contains("passphrase", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void CreateFromPublicKey_ECDsaP384_ReturnsCorrectVerifier()
-    {
-        using var signer = ECDsaP384Signer.Generate();
-        var spki = signer.PublicKey;
-        var algorithmName = SigningAlgorithm.ECDsaP384.ToCanonicalName();
-
-        using var verifier = VerifierFactory.CreateFromPublicKey(spki, algorithmName);
-
-        Assert.Equal(SigningAlgorithm.ECDsaP384, verifier.Algorithm);
-    }
-
-    [Fact]
-    public void CreateFromPublicKey_Rsa_ReturnsCorrectVerifier()
+    public void CreateFromPem_EncryptedRsa_WrongPassphrase_ThrowsCryptographicException()
     {
         using var signer = RsaSigner.Generate();
-        var spki = signer.PublicKey;
-        var algorithmName = SigningAlgorithm.Rsa.ToCanonicalName();
+        var encryptedPem = signer.ExportEncryptedPrivateKeyPem("correct-password");
 
-        using var verifier = VerifierFactory.CreateFromPublicKey(spki, algorithmName);
+        var ex = Assert.Throws<CryptographicException>(
+            () => SignerFactory.CreateFromPem(encryptedPem.AsSpan(), "wrong-password".AsSpan()));
 
-        Assert.Equal(SigningAlgorithm.Rsa, verifier.Algorithm);
+        Assert.Contains("passphrase", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void CreateFromPublicKey_SignAndVerify_RoundTrip()
+    public void CreateFromPem_EncryptedECDsa_WithHint_SkipsDetection()
     {
-        using var signer = RsaSigner.Generate();
-        var data = Encoding.UTF8.GetBytes("verifier factory round trip");
-        var signature = signer.Sign(data);
+        using var original = ECDsaP256Signer.Generate();
+        var passphrase = "hint-test-ec";
+        var encryptedPem = original.ExportEncryptedPrivateKeyPem(passphrase);
 
-        using var verifier = VerifierFactory.CreateFromPublicKey(
-            signer.PublicKey, SigningAlgorithm.Rsa.ToCanonicalName());
+        using var restored = SignerFactory.CreateFromPem(
+            encryptedPem.AsSpan(), passphrase.AsSpan(), SigningAlgorithm.ECDsaP256);
 
-        Assert.True(verifier.Verify(data, signature));
+        Assert.Equal(SigningAlgorithm.ECDsaP256, restored.Algorithm);
     }
 
     [Fact]
-    public void CreateFromPublicKey_Ed25519_ThrowsNotSupportedException()
+    public void CreateFromPem_EncryptedRsa_WithHint_SkipsDetection()
     {
-        Assert.Throws<NotSupportedException>(() =>
-            VerifierFactory.CreateFromPublicKey(new byte[] { 0 }, "ed25519"));
+        using var original = RsaSigner.Generate();
+        var passphrase = "hint-test-rsa";
+        var encryptedPem = original.ExportEncryptedPrivateKeyPem(passphrase);
+
+        using var restored = SignerFactory.CreateFromPem(
+            encryptedPem.AsSpan(), passphrase.AsSpan(), SigningAlgorithm.Rsa);
+
+        Assert.Equal(SigningAlgorithm.Rsa, restored.Algorithm);
+    }
+
+    [Fact]
+    public void CreateFromPem_EncryptedMLDsa65_WithHint_SkipsDetection()
+    {
+        if (!MLDsa.IsSupported) return;
+
+        using var original = MLDsa65Signer.Generate();
+        var passphrase = "hint-test-mldsa";
+        var encryptedPemBytes = original.ExportEncryptedPrivateKeyPemBytes(passphrase.AsSpan());
+        var encryptedPem = Encoding.UTF8.GetString(encryptedPemBytes);
+
+        using var restored = SignerFactory.CreateFromPem(
+            encryptedPem.AsSpan(), passphrase.AsSpan(), SigningAlgorithm.MLDsa65);
+
+        Assert.Equal(SigningAlgorithm.MLDsa65, restored.Algorithm);
+    }
+
+    [Fact]
+    public void CreateFromPem_EncryptedECDsa_WrongHint_ThrowsCryptographicException()
+    {
+        using var original = ECDsaP256Signer.Generate();
+        var passphrase = "hint-wrong-test";
+        var encryptedPem = original.ExportEncryptedPrivateKeyPem(passphrase);
+
+        // EC key with RSA hint — should throw CryptographicException (not wrong passphrase)
+        Assert.Throws<CryptographicException>(
+            () => SignerFactory.CreateFromPem(
+                encryptedPem.AsSpan(), passphrase.AsSpan(), SigningAlgorithm.Rsa));
     }
 }

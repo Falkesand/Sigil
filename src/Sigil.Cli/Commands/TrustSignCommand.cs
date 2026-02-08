@@ -1,7 +1,4 @@
 using System.CommandLine;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text;
 using Sigil.Cli.Vault;
 using Sigil.Crypto;
 using Sigil.Trust;
@@ -16,6 +13,7 @@ public static class TrustSignCommand
         var keyOption = new Option<string?>("--key") { Description = "Path to the authority's private key PEM" };
         var outputOption = new Option<string?>("-o") { Description = "Output path for signed bundle" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the key is encrypted" };
+        var algorithmOption = new Option<string?>("--algorithm") { Description = "Algorithm hint for encrypted PEM detection (ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
 
@@ -24,6 +22,7 @@ public static class TrustSignCommand
         cmd.Add(keyOption);
         cmd.Add(outputOption);
         cmd.Add(passphraseOption);
+        cmd.Add(algorithmOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
 
@@ -33,6 +32,7 @@ public static class TrustSignCommand
             var keyPath = parseResult.GetValue(keyOption);
             var output = parseResult.GetValue(outputOption);
             var passphrase = parseResult.GetValue(passphraseOption);
+            var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
 
@@ -120,69 +120,33 @@ public static class TrustSignCommand
             }
 
             // Local PEM signing path
-            if (!File.Exists(keyPath))
+            var loadResult = PemSignerLoader.Load(keyPath!, passphrase, algorithmName);
+            if (!loadResult.IsSuccess)
             {
-                Console.Error.WriteLine($"Key file not found: {keyPath}");
+                Console.Error.WriteLine(loadResult.ErrorMessage);
                 return;
             }
 
-            char[]? passphraseChars = passphrase?.ToCharArray();
-
-            try
+            using (var localSigner = loadResult.Value)
             {
-                byte[] pemBytes = File.ReadAllBytes(keyPath!);
-                char[] pemChars = Encoding.UTF8.GetChars(pemBytes);
-                ISigner localSigner;
-
-                try
+                var signResult = BundleSigner.Sign(bundle, localSigner);
+                if (!signResult.IsSuccess)
                 {
-                    bool isEncrypted = pemChars.AsSpan().IndexOf("ENCRYPTED".AsSpan()) >= 0;
-                    if (isEncrypted)
-                    {
-                        if (passphraseChars is null || passphraseChars.Length == 0)
-                        {
-                            Console.Error.WriteLine("Key is encrypted. Provide --passphrase.");
-                            return;
-                        }
-                        localSigner = SignerFactory.CreateFromPem(pemChars, passphraseChars);
-                    }
-                    else
-                    {
-                        localSigner = SignerFactory.CreateFromPem(pemChars);
-                    }
-                }
-                finally
-                {
-                    CryptographicOperations.ZeroMemory(pemBytes);
-                    CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(pemChars.AsSpan()));
+                    Console.Error.WriteLine($"Failed to sign bundle: {signResult.ErrorMessage}");
+                    return;
                 }
 
-                using (localSigner)
+                var outputPath = output ?? bundleFile.FullName;
+                var serializeResult = BundleSigner.Serialize(signResult.Value);
+                if (!serializeResult.IsSuccess)
                 {
-                    var signResult = BundleSigner.Sign(bundle, localSigner);
-                    if (!signResult.IsSuccess)
-                    {
-                        Console.Error.WriteLine($"Failed to sign bundle: {signResult.ErrorMessage}");
-                        return;
-                    }
-
-                    var outputPath = output ?? bundleFile.FullName;
-                    var serializeResult = BundleSigner.Serialize(signResult.Value);
-                    if (!serializeResult.IsSuccess)
-                    {
-                        Console.Error.WriteLine($"Failed to serialize bundle: {serializeResult.ErrorMessage}");
-                        return;
-                    }
-
-                    File.WriteAllText(outputPath, serializeResult.Value);
-                    Console.WriteLine($"Signed bundle: {outputPath}");
-                    Console.WriteLine($"Authority: {signResult.Value.Signature!.KeyId}");
+                    Console.Error.WriteLine($"Failed to serialize bundle: {serializeResult.ErrorMessage}");
+                    return;
                 }
-            }
-            finally
-            {
-                if (passphraseChars is not null)
-                    CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(passphraseChars.AsSpan()));
+
+                File.WriteAllText(outputPath, serializeResult.Value);
+                Console.WriteLine($"Signed bundle: {outputPath}");
+                Console.WriteLine($"Authority: {signResult.Value.Signature!.KeyId}");
             }
         });
 

@@ -68,4 +68,37 @@ public class SignCommandTests : IDisposable
         Assert.True(File.Exists(customPath));
         Assert.Contains("Signature:", result.StdOut);
     }
+
+    [Fact]
+    public async Task Sign_EncryptedKey_WithAlgorithmHint_Succeeds()
+    {
+        var prefix = Path.Combine(_tempDir, "enc-key");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix, "--passphrase", "test-pass");
+
+        var sigPath = Path.Combine(_tempDir, "hint.sig.json");
+        var result = await CommandTestHelper.InvokeAsync(
+            "sign", _artifactPath,
+            "--key", prefix + ".pem",
+            "--passphrase", "test-pass",
+            "--algorithm", "ecdsa-p256",
+            "--output", sigPath);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(sigPath));
+        Assert.Contains("Signed:", result.StdOut);
+    }
+
+    [Fact]
+    public async Task Sign_EncryptedKey_WrongPassphrase_ShowsPassphraseError()
+    {
+        var prefix = Path.Combine(_tempDir, "enc-key2");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix, "--passphrase", "correct-pass");
+
+        var result = await CommandTestHelper.InvokeAsync(
+            "sign", _artifactPath,
+            "--key", prefix + ".pem",
+            "--passphrase", "wrong-pass");
+
+        Assert.Contains("passphrase", result.StdErr, StringComparison.OrdinalIgnoreCase);
+    }
 }
