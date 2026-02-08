@@ -13,6 +13,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Choose your algorithm](#choose-your-algorithm)
   - [Sign an SBOM](#sign-an-sbom)
   - [Sign with a vault key](#sign-with-a-vault-key)
+  - [Add a timestamp](#add-a-timestamp)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -31,6 +32,11 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Azure Key Vault](#azure-key-vault)
   - [AWS KMS](#aws-kms)
   - [Google Cloud KMS](#google-cloud-kms)
+- [Timestamping](#timestamping)
+  - [Sign with a timestamp](#sign-with-a-timestamp)
+  - [Timestamp an existing signature](#timestamp-an-existing-signature)
+  - [Timestamps and expired keys](#timestamps-and-expired-keys)
+  - [How timestamping works](#how-timestamping-works)
 - [Discovery](#discovery)
   - [Well-known URLs](#well-known-urls)
   - [DNS TXT records](#dns-txt-records)
@@ -57,6 +63,7 @@ It works with any file: binaries, SBOMs, container images, config files, tarball
 | | Sigil | Sigstore | PGP | X.509 |
 |---|---|---|---|---|
 | Needs an account | No | Yes (OIDC) | No | Yes (CA) |
+| Trusted timestamping | Yes (RFC 3161) | Yes (Rekor) | No | Yes (RFC 3161) |
 | Needs internet | No | Yes | No | Depends |
 | Stores your email | No | Yes (public log) | Optional | Yes |
 | External dependencies | Zero | Many | Many | Many |
@@ -198,6 +205,30 @@ Signature: my-app.tar.gz.sig.json
 
 The private key never leaves the vault — only the signature is returned. Verification works identically (the public key is embedded in the envelope). See [Vault-backed signing](#vault-backed-signing) for setup details.
 
+### Add a timestamp
+
+Request an RFC 3161 timestamp from a public TSA when signing:
+
+```
+sigil sign release.tar.gz --key mykey.pem --timestamp http://timestamp.digicert.com
+```
+
+```
+Signed: release.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:c017446b...
+Timestamp: 2026-02-08T16:48:44Z (verified)
+Signature: release.tar.gz.sig.json
+```
+
+Or timestamp an existing signature after the fact:
+
+```
+sigil timestamp release.tar.gz.sig.json --tsa http://timestamp.digicert.com
+```
+
+This provides cryptographic proof of when the signature was created — useful when signing keys have expiry dates. See [Timestamping](#timestamping) for details.
+
 ## Ephemeral vs persistent vs vault
 
 | | Ephemeral (default) | Persistent (`--key`) | Vault (`--vault`) |
@@ -241,7 +272,8 @@ The `.sig.json` envelope is a self-contained, detached signature:
       "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...",
       "value": "base64...",
       "timestamp": "2026-02-07T14:30:00Z",
-      "label": "ci-pipeline"
+      "label": "ci-pipeline",
+      "timestampToken": "base64-DER..."
     }
   ]
 }
@@ -250,6 +282,8 @@ The `.sig.json` envelope is a self-contained, detached signature:
 The `publicKey` field contains the base64-encoded SPKI public key. During verification, Sigil computes the fingerprint of this key and checks it matches `keyId` — preventing public key substitution.
 
 The `mediaType` and `metadata` fields are only present for detected SBOM files. They are `null`/absent for regular files.
+
+The `timestampToken` field is present only when an RFC 3161 timestamp has been applied. It contains the base64-encoded DER of a CMS/PKCS#7 signed timestamp token from a Timestamp Authority. See [Timestamping](#timestamping).
 
 ## Multiple signatures
 
@@ -492,6 +526,103 @@ When you pass `--trust-bundle` and `--authority` to `sigil verify`, here's what 
 
 The `signature` field covers everything above it. When the bundle is signed, Sigil computes the JCS-canonicalized JSON of everything except `signature`, then signs that with the authority key.
 
+## Timestamping
+
+Sigil signatures include a self-asserted `timestamp` field (ISO 8601), but there's no cryptographic proof of when the signature was created. RFC 3161 Trusted Timestamping solves this by having a Timestamp Authority (TSA) counter-sign your signature bytes, providing third-party proof that the signature existed at a specific time.
+
+### Sign with a timestamp
+
+Add `--timestamp` with a TSA URL when signing:
+
+```
+sigil sign release.tar.gz --key mykey.pem --timestamp http://timestamp.digicert.com
+```
+
+```
+Signed: release.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:c017446b...
+Timestamp: 2026-02-08T16:48:44Z (verified)
+Signature: release.tar.gz.sig.json
+```
+
+Verification shows the timestamp:
+
+```
+sigil verify release.tar.gz
+```
+
+```
+Artifact: release.tar.gz
+Digests: MATCH
+  [VERIFIED] sha256:c017446b...
+           Timestamp: 2026-02-08T16:48:44Z (verified)
+
+All signatures VERIFIED.
+```
+
+If timestamping fails (network error, TSA unavailable), the signature is saved without a timestamp and a warning is printed to stderr. Timestamping is non-fatal — you still get a valid signature.
+
+### Timestamp an existing signature
+
+You can add a timestamp to a signature after the fact using the standalone `timestamp` command:
+
+```
+sigil timestamp release.tar.gz.sig.json --tsa http://timestamp.digicert.com
+```
+
+```
+[0] Timestamped: 2026-02-08T16:48:44Z (verified)
+Updated: release.tar.gz.sig.json
+```
+
+To timestamp a specific signature in a multi-signature envelope:
+
+```
+sigil timestamp release.tar.gz.sig.json --tsa http://timestamp.digicert.com --index 1
+```
+
+By default, `timestamp` applies to all signatures that don't already have a timestamp token. Already-timestamped entries are skipped.
+
+### Timestamps and expired keys
+
+This is the key use case for timestamping. If a signing key has a `notAfter` date in a trust bundle and the key has expired, Sigil would normally return `[EXPIRED]`. But if the signature has a valid RFC 3161 timestamp proving it was created **before** the key expired, Sigil treats it as `[TRUSTED]` instead.
+
+```
+sigil verify release.tar.gz --trust-bundle trust.json --authority sha256:def456...
+```
+
+```
+Artifact: release.tar.gz
+Digests: MATCH
+  [TRUSTED] sha256:c017446b... (CI Key)
+           Key is directly trusted.
+           Timestamp: 2026-02-08T16:48:44Z (verified)
+
+All signatures TRUSTED.
+```
+
+Without the timestamp, this same verification would show `[EXPIRED]` because the key's `notAfter` date has passed. The timestamp proves the signature predates the expiry, so trust is preserved.
+
+This also applies to endorsements — if an endorser key or the endorsement itself has expired, a valid timestamp before the expiry date overrides the `Expired` decision.
+
+### How timestamping works
+
+1. Sigil computes `SHA-256(signature value bytes)` and sends a timestamp request to the TSA
+2. The TSA signs the hash with its own key, binding it to a specific time
+3. Sigil stores the TSA's response (a CMS/PKCS#7 signed structure) as `timestampToken` in the envelope
+4. During verification, Sigil validates the token: checks the hash algorithm is SHA-256, verifies the hash matches the signature bytes, and validates the CMS signature
+
+The timestamp token is self-contained — anyone can verify it without contacting the TSA again. The TSA's certificate chain is validated against the system trust store.
+
+**Public TSA services** (free, no account needed):
+
+| Provider | URL |
+|----------|-----|
+| DigiCert | `http://timestamp.digicert.com` |
+| Sectigo | `http://timestamp.sectigo.com` |
+| GlobalSign | `http://timestamp.globalsign.com/tsa/r6advanced1` |
+
 ## Discovery
 
 Trust bundles are useful, but you still need to distribute them — copy files, share paths, configure CI. Discovery automates this. Organizations publish trust bundles at standard locations, and Sigil fetches them automatically.
@@ -727,8 +858,9 @@ sigil sign release.tar.gz --vault gcp \
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
-sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name]
+sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri]
+sigil timestamp <envelope> --tsa <tsa-url> [--index <n>]
 sigil trust create --name <name> [-o path] [--description "text"]
 sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
 sigil trust remove <bundle> --fingerprint <fp>
@@ -752,7 +884,13 @@ sigil discover git <url> [-o path]
 - With `--vault` and `--vault-key`: vault mode (private key never leaves the vault)
 - `--vault` and `--key` are mutually exclusive
 - `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
+- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (non-fatal on failure)
 - SBOM format is auto-detected for CycloneDX and SPDX JSON files
+
+**timestamp**: Apply RFC 3161 timestamp tokens to an existing signature envelope.
+- `--tsa` is required — the URL of the Timestamp Authority
+- `--index` timestamps a specific signature entry (0-based); without it, all un-timestamped entries are processed
+- Already-timestamped entries are skipped
 
 **verify**: Verify a file's signature.
 - Public key is extracted from the `.sig.json` — no key import needed
