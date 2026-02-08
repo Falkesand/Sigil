@@ -53,6 +53,23 @@ public static class VerifyCommand
             Console.WriteLine($"Artifact: {artifact.Name}");
             Console.WriteLine("Digests: MATCH");
 
+            // Display SBOM metadata if present
+            if (envelope.Subject.Metadata is { Count: > 0 } metadata)
+            {
+                if (metadata.TryGetValue("sbom.format", out var format))
+                    Console.WriteLine($"SBOM Format: {format}");
+                if (metadata.TryGetValue("sbom.specVersion", out var specVersion))
+                    Console.WriteLine($"Spec Version: {specVersion}");
+                if (metadata.TryGetValue("sbom.name", out var name))
+                    Console.WriteLine($"Name: {name}");
+                if (metadata.TryGetValue("sbom.version", out var version))
+                    Console.WriteLine($"Version: {version}");
+                if (metadata.TryGetValue("sbom.supplier", out var supplier))
+                    Console.WriteLine($"Supplier: {supplier}");
+                if (metadata.TryGetValue("sbom.componentCount", out var compCount))
+                    Console.WriteLine($"Components: {compCount}");
+            }
+
             // Trust evaluation if bundle provided
             TrustEvaluationResult? trustResult = null;
             if (trustBundlePath is not null)

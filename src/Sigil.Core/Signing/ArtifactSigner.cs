@@ -2,6 +2,7 @@ using System.Text.Json;
 using Org.Webpki.JsonCanonicalizer;
 using Sigil.Crypto;
 using Sigil.Keys;
+using Sigil.Sbom;
 
 namespace Sigil.Signing;
 
@@ -34,6 +35,8 @@ public static class ArtifactSigner
         var fileBytes = File.ReadAllBytes(artifactPath);
         var (sha256, sha512) = HashAlgorithms.ComputeDigests(fileBytes);
 
+        var sbom = SbomDetector.TryDetect(fileBytes);
+
         var envelope = new SignatureEnvelope
         {
             Subject = new SubjectDescriptor
@@ -43,7 +46,9 @@ public static class ArtifactSigner
                 {
                     ["sha256"] = sha256,
                     ["sha512"] = sha512
-                }
+                },
+                MediaType = sbom?.MediaType,
+                Metadata = sbom?.ToDictionary()
             }
         };
 

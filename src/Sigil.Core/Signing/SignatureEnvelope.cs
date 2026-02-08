@@ -27,6 +27,9 @@ public sealed class SubjectDescriptor
 
     [JsonPropertyName("mediaType")]
     public string? MediaType { get; init; }
+
+    [JsonPropertyName("metadata")]
+    public Dictionary<string, string>? Metadata { get; init; }
 }
 
 public sealed class SignatureEntry

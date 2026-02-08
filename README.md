@@ -1,6 +1,6 @@
 # Sigil
 
-Cryptographic signing and verification for any file. No cloud, no accounts, no dependencies.
+Cryptographic signing and verification for any file. No cloud, no accounts, no dependencies beyond the .NET BCL.
 
 ## What it does
 
@@ -10,7 +10,7 @@ Sigil lets you **sign files** and **verify signatures**. That's it.
 - Anyone can verify the file hasn't been tampered with — the public key is embedded in the envelope
 - No key store, no import/export, no hidden state
 
-It works with any file: binaries, SBOMs, container images, config files, tarballs — anything.
+It works with any file: binaries, SBOMs, container images, config files, tarballs — anything. When signing a CycloneDX or SPDX JSON file, Sigil automatically detects the format and embeds SBOM metadata in the signature envelope.
 
 ## Why not just use Sigstore/PGP/X.509?
 
@@ -23,6 +23,7 @@ It works with any file: binaries, SBOMs, container images, config files, tarball
 | Key management | None (ephemeral) or PEM files | Ephemeral | Complex | Complex |
 | Works offline | Yes | No | Yes | Partial |
 | Hidden state on disk | None | None | `~/.gnupg/` | Varies |
+| Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
 Sigil is for people who want to sign things **without asking permission from a cloud service**.
 
@@ -81,11 +82,10 @@ Same fingerprint every time. This enables trust — others can verify that you (
 
 ### Choose your algorithm
 
-Sigil supports multiple signing algorithms. The default is ECDSA P-256.
-
 ```
 sigil generate -o mykey --algorithm ecdsa-p384
 sigil generate -o mykey --algorithm rsa-pss-sha256
+sigil generate -o mykey --algorithm ml-dsa-65
 ```
 
 When signing with a PEM file, the algorithm is **auto-detected** — no need to specify it:
@@ -98,8 +98,46 @@ sigil sign my-app.tar.gz --key ec-key.pem      # auto-detects P-256 or P-384
 For ephemeral signing with a non-default algorithm:
 
 ```
-sigil sign my-app.tar.gz --algorithm ecdsa-p384
+sigil sign my-app.tar.gz --algorithm ml-dsa-65
 ```
+
+### Sign an SBOM
+
+When signing a CycloneDX or SPDX JSON file, Sigil automatically detects the format and embeds metadata:
+
+```
+sigil sign sbom.cdx.json --key mykey.pem
+```
+
+```
+Signed: sbom.cdx.json
+Algorithm: ecdsa-p256
+Key: sha256:c017446b9040d...
+Format: CycloneDX (application/vnd.cyclonedx+json)
+Signature: sbom.cdx.json.sig.json
+```
+
+Verification shows the SBOM metadata:
+
+```
+sigil verify sbom.cdx.json
+```
+
+```
+Artifact: sbom.cdx.json
+Digests: MATCH
+SBOM Format: CycloneDX
+Spec Version: 1.6
+Name: my-app
+Version: 3.0.0
+Supplier: Acme Corp
+Components: 3
+  [VERIFIED] sha256:c017446b9040d...
+
+All signatures VERIFIED.
+```
+
+The metadata is embedded in the signed subject, so it is tamper-proof. Non-SBOM files are signed without metadata — no behavior changes for regular files.
 
 ## Ephemeral vs persistent
 
@@ -125,7 +163,16 @@ The `.sig.json` envelope is a self-contained, detached signature:
       "sha256": "abc123...",
       "sha512": "def456..."
     },
-    "name": "my-app.tar.gz"
+    "name": "my-app.tar.gz",
+    "mediaType": "application/vnd.cyclonedx+json",
+    "metadata": {
+      "sbom.format": "CycloneDX",
+      "sbom.specVersion": "1.6",
+      "sbom.name": "my-app",
+      "sbom.version": "3.0.0",
+      "sbom.supplier": "Acme Corp",
+      "sbom.componentCount": "3"
+    }
   },
   "signatures": [
     {
@@ -141,6 +188,8 @@ The `.sig.json` envelope is a self-contained, detached signature:
 ```
 
 The `publicKey` field contains the base64-encoded SPKI public key. During verification, Sigil computes the fingerprint of this key and checks it matches `keyId` — preventing public key substitution.
+
+The `mediaType` and `metadata` fields are only present for detected SBOM files. They are `null`/absent for regular files.
 
 ## Multiple signatures
 
@@ -175,7 +224,7 @@ All signatures VERIFIED.
 JCS-canonicalized(subject metadata) + SHA-256(file bytes) + JCS-canonicalized(signed attributes)
 ```
 
-This binds the signature to the file content, its metadata (name, digests), and all signature entry fields (algorithm, keyId, timestamp, label) — preventing substitution and replay attacks.
+This binds the signature to the file content, its metadata (name, digests, SBOM metadata if present), and all signature entry fields (algorithm, keyId, timestamp, label) — preventing substitution and replay attacks.
 
 **Crypto.** All crypto comes from .NET's built-in `System.Security.Cryptography` — zero external dependencies.
 
@@ -184,9 +233,12 @@ This binds the signature to the file content, its metadata (name, digests), and 
 | ECDSA P-256 | `ecdsa-p256` | Default. Fast, compact signatures, widely supported. |
 | ECDSA P-384 | `ecdsa-p384` | CNSA suite compliance, enterprise/government requirements. |
 | RSA-PSS | `rsa-pss-sha256` | Legacy interop, 3072-bit keys. |
+| ML-DSA-65 | `ml-dsa-65` | Post-quantum (FIPS 204). Requires platform support. |
 | Ed25519 | `ed25519` | Planned — waiting for .NET SDK to ship the native API. |
 
 PEM auto-detection means you never need to tell Sigil what algorithm a key uses — it parses the key's OID from the DER encoding and dispatches to the correct implementation.
+
+**SBOM detection.** When a file is signed, Sigil tries to parse it as JSON and checks for CycloneDX (`bomFormat: "CycloneDX"`) or SPDX (`spdxVersion: "SPDX-..."`) markers. Detection never throws — if the file isn't a recognized SBOM, it's signed as a plain file with no metadata.
 
 ## Trust bundles
 
@@ -404,10 +456,12 @@ sigil trust show <bundle>
 - Without `--key`: ephemeral mode (key generated in memory, discarded after signing)
 - With `--key`: persistent mode (loads private key from PEM file, algorithm auto-detected)
 - `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
+- SBOM format is auto-detected for CycloneDX and SPDX JSON files
 
 **verify**: Verify a file's signature.
 - Public key is extracted from the `.sig.json` — no key import needed
 - Algorithm is read from the envelope — works with any supported algorithm
+- SBOM metadata is displayed when present in the envelope
 - `--trust-bundle` and `--authority` enable trust evaluation on top of crypto verification
 
 **trust create**: Create an empty unsigned trust bundle.
@@ -422,8 +476,7 @@ sigil trust show <bundle>
 
 ## What's coming
 
-- **Ed25519** — When the .NET native API ships.
-- **ML-DSA-65** — Post-quantum signatures.
+- **Ed25519** — When the .NET SDK ships the native API.
 - **Discovery** — Optional well-known URLs, DNS records, and git-based trust bundles.
 
 ## Install
@@ -439,7 +492,8 @@ Or build from source:
 ```
 git clone <repo-url>
 cd <repo-name>
-dotnet build
+dotnet build Sigil.slnx
+dotnet test Sigil.slnx
 dotnet run --project src/Sigil.Cli -- sign somefile.txt
 ```
 

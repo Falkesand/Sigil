@@ -17,7 +17,7 @@ public static class SignCommand
         var outputOption = new Option<string?>("--output") { Description = "Output path for the signature file" };
         var labelOption = new Option<string?>("--label") { Description = "Label for this signature" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the signing key is encrypted" };
-        var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm for ephemeral mode (ecdsa-p256, ecdsa-p384, rsa-pss-sha256)" };
+        var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm for ephemeral mode (ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65)" };
 
         var cmd = new Command("sign", "Sign an artifact and produce a detached signature envelope");
         cmd.Add(artifactArg);
@@ -98,7 +98,7 @@ public static class SignCommand
                     catch (ArgumentException)
                     {
                         Console.Error.WriteLine($"Unknown algorithm: {algorithmName}");
-                        Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256");
+                        Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
                         return;
                     }
 
@@ -120,6 +120,8 @@ public static class SignCommand
                     Console.WriteLine($"Key: {fingerprint.ShortId}...");
                     if (isEphemeral)
                         Console.WriteLine("Mode: ephemeral (key not persisted)");
+                    if (envelope.Subject.Metadata?.TryGetValue("sbom.format", out var sbomFormat) == true)
+                        Console.WriteLine($"Format: {sbomFormat} ({envelope.Subject.MediaType})");
                     Console.WriteLine($"Signature: {outputPath}");
                 }
             }

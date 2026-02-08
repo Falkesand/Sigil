@@ -18,6 +18,7 @@ public static class SignerFactory
         SigningAlgorithm.Rsa => RsaSigner.Generate(),
         SigningAlgorithm.Ed25519 => throw new NotSupportedException(
             "Ed25519 is not yet available in this .NET SDK. It will be supported in a future release."),
+        SigningAlgorithm.MLDsa65 => MLDsa65Signer.Generate(),
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
     };
 
@@ -74,6 +75,7 @@ public static class SignerFactory
             SigningAlgorithm.Rsa => RsaSigner.FromPem(pem),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
                 "Ed25519 is not yet available in this .NET SDK."),
+            SigningAlgorithm.MLDsa65 => MLDsa65Signer.FromPem(pem),
             _ => throw new NotSupportedException($"Unsupported algorithm: {algorithm}")
         };
     }
@@ -133,6 +135,15 @@ public static class SignerFactory
             // Not RSA either
         }
 
-        throw new NotSupportedException("Could not detect algorithm from encrypted PEM. Supported: ECDSA P-256, P-384, RSA.");
+        try
+        {
+            return MLDsa65Signer.FromEncryptedPem(pem, passphrase);
+        }
+        catch (CryptographicException)
+        {
+            // Not ML-DSA either
+        }
+
+        throw new NotSupportedException("Could not detect algorithm from encrypted PEM. Supported: ECDSA P-256, P-384, RSA, ML-DSA-65.");
     }
 }

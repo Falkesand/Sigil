@@ -5,7 +5,8 @@ public enum SigningAlgorithm
     ECDsaP256,
     ECDsaP384,
     Ed25519,
-    Rsa
+    Rsa,
+    MLDsa65
 }
 
 public static class SigningAlgorithmExtensions
@@ -16,6 +17,7 @@ public static class SigningAlgorithmExtensions
         SigningAlgorithm.ECDsaP384 => "ecdsa-p384",
         SigningAlgorithm.Ed25519 => "ed25519",
         SigningAlgorithm.Rsa => "rsa-pss-sha256",
+        SigningAlgorithm.MLDsa65 => "ml-dsa-65",
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
     };
 
@@ -25,6 +27,7 @@ public static class SigningAlgorithmExtensions
         "ecdsa-p384" => SigningAlgorithm.ECDsaP384,
         "ed25519" => SigningAlgorithm.Ed25519,
         "rsa-pss-sha256" => SigningAlgorithm.Rsa,
+        "ml-dsa-65" => SigningAlgorithm.MLDsa65,
         _ => throw new ArgumentException($"Unknown algorithm: {name}", nameof(name))
     };
 }

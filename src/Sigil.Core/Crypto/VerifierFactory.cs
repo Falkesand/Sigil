@@ -22,6 +22,7 @@ public static class VerifierFactory
             SigningAlgorithm.Rsa => RsaVerifier.FromPublicKey(spki),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
                 "Ed25519 is not yet available in this .NET SDK. It will be supported in a future release."),
+            SigningAlgorithm.MLDsa65 => MLDsa65Verifier.FromPublicKey(spki),
             _ => throw new NotSupportedException($"Unsupported algorithm: {algorithmName}")
         };
     }

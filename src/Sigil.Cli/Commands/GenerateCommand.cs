@@ -13,7 +13,7 @@ public static class GenerateCommand
     {
         var outputOption = new Option<string?>("-o") { Description = "Output file prefix (writes <prefix>.pem and <prefix>.pub.pem)" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase to encrypt the private key" };
-        var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ecdsa-p256, ecdsa-p384, rsa-pss-sha256)" };
+        var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65)" };
 
         var cmd = new Command("generate", "Generate a new signing key pair");
         cmd.Add(outputOption);
@@ -34,7 +34,7 @@ public static class GenerateCommand
             catch (ArgumentException)
             {
                 Console.Error.WriteLine($"Unknown algorithm: {algorithmName}");
-                Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256");
+                Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
                 return;
             }
 
