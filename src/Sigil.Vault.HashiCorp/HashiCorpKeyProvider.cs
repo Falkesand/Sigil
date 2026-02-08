@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Sigil.Crypto;
 using VaultSharp;
 
@@ -77,11 +78,10 @@ public sealed class HashiCorpKeyProvider : IKeyProvider
             byte[]? publicKeyBytes = null;
             if (keys?.TryGetValue(latestVersion.ToString(CultureInfo.InvariantCulture), out var versionDataObj) == true)
             {
-                var versionData = versionDataObj?.ToString();
-                if (!string.IsNullOrEmpty(versionData))
+                var pem = ExtractPublicKeyPem(versionDataObj);
+                if (!string.IsNullOrEmpty(pem))
                 {
-                    // PEM-encoded public key
-                    publicKeyBytes = ConvertPemToSpki(versionData);
+                    publicKeyBytes = ConvertPemToSpki(pem);
                 }
             }
 
@@ -131,6 +131,30 @@ public sealed class HashiCorpKeyProvider : IKeyProvider
         }
     }
 
+    internal static string? ExtractPublicKeyPem(object? versionData)
+    {
+        if (versionData is JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.Object &&
+                element.TryGetProperty("public_key", out var publicKeyProp))
+            {
+                return publicKeyProp.GetString();
+            }
+
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return element.GetString();
+            }
+
+            return null;
+        }
+
+        if (versionData is string s)
+            return s;
+
+        return null;
+    }
+
     private static byte[] ConvertPemToSpki(string pem)
     {
         // Parse the PEM public key into SPKI bytes using ECDsa/RSA
@@ -141,7 +165,7 @@ public sealed class HashiCorpKeyProvider : IKeyProvider
             ecdsa.ImportFromPem(pem);
             return ecdsa.ExportSubjectPublicKeyInfo();
         }
-        catch
+        catch (CryptographicException)
         {
             using var rsa = RSA.Create();
             rsa.ImportFromPem(pem);

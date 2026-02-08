@@ -40,25 +40,39 @@ public sealed class HashiCorpTransitSigner : VaultSignerBase
         var options = new SignRequestOptions
         {
             HashAlgorithm = hashAlgorithm,
-            MarshalingAlgorithm = MarshalingAlgorithm.asn1,
+            MarshalingAlgorithm = MarshalingAlgorithm.jws,
             PreHashed = false,
             Base64EncodedInput = base64Input
         };
 
         if (signatureAlgorithm is not null)
+        {
             options.SignatureAlgorithm = signatureAlgorithm;
+            // Use salt=hash length for PSS to match .NET RSASignaturePadding.Pss
+            options.SaltLength = "hash";
+        }
 
         var result = await _client.V1.Secrets.Transit.SignDataAsync(
             _keyName,
             options,
             _mountPath).ConfigureAwait(false);
 
-        // Transit returns "vault:v1:<base64>" — strip the prefix
+        // Transit returns "vault:v1:<base64url>" — strip the prefix
         var signatureValue = result.Data.Signature;
         var lastColon = signatureValue.LastIndexOf(':');
-        var base64Sig = lastColon >= 0 ? signatureValue[(lastColon + 1)..] : signatureValue;
+        var base64UrlSig = lastColon >= 0 ? signatureValue[(lastColon + 1)..] : signatureValue;
 
-        return Convert.FromBase64String(base64Sig);
+        return DecodeBase64Url(base64UrlSig);
+    }
+
+    internal static byte[] DecodeBase64Url(string base64Url)
+    {
+        // Convert base64url to standard base64: replace URL-safe chars and add padding
+        var base64 = base64Url.Replace('-', '+').Replace('_', '/');
+        var padding = (4 - base64.Length % 4) % 4;
+        if (padding > 0)
+            base64 = string.Concat(base64, new string('=', padding));
+        return Convert.FromBase64String(base64);
     }
 
     public override void Dispose()

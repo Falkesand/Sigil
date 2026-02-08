@@ -85,9 +85,9 @@ public static class SignCommand
 
                 using var signer = signerResult.Value;
                 var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
-                var envelope = await ArtifactSigner.SignAsync(artifact.FullName, signer, fingerprint, label);
 
                 var outputPath = output ?? artifact.FullName + ".sig.json";
+                var envelope = await LoadOrCreateEnvelopeAsync(artifact, outputPath, signer, fingerprint, label);
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
 
@@ -140,9 +140,9 @@ public static class SignCommand
             using (localSigner)
             {
                 var fingerprint = KeyFingerprint.Compute(localSigner.PublicKey);
-                var envelope = ArtifactSigner.Sign(artifact.FullName, localSigner, fingerprint, label);
 
                 var outputPath = output ?? artifact.FullName + ".sig.json";
+                var envelope = LoadOrCreateEnvelope(artifact, outputPath, localSigner, fingerprint, label);
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
 
@@ -158,5 +158,35 @@ public static class SignCommand
         });
 
         return cmd;
+    }
+
+    private static SignatureEnvelope LoadOrCreateEnvelope(
+        FileInfo artifact, string outputPath, ISigner signer, KeyFingerprint fingerprint, string? label)
+    {
+        if (File.Exists(outputPath))
+        {
+            var existingJson = File.ReadAllText(outputPath);
+            var envelope = ArtifactSigner.Deserialize(existingJson);
+            var artifactBytes = File.ReadAllBytes(artifact.FullName);
+            ArtifactSigner.AppendSignature(envelope, artifactBytes, signer, fingerprint, label);
+            return envelope;
+        }
+
+        return ArtifactSigner.Sign(artifact.FullName, signer, fingerprint, label);
+    }
+
+    private static async Task<SignatureEnvelope> LoadOrCreateEnvelopeAsync(
+        FileInfo artifact, string outputPath, ISigner signer, KeyFingerprint fingerprint, string? label)
+    {
+        if (File.Exists(outputPath))
+        {
+            var existingJson = await File.ReadAllTextAsync(outputPath).ConfigureAwait(false);
+            var envelope = ArtifactSigner.Deserialize(existingJson);
+            var artifactBytes = await File.ReadAllBytesAsync(artifact.FullName).ConfigureAwait(false);
+            await ArtifactSigner.AppendSignatureAsync(envelope, artifactBytes, signer, fingerprint, label).ConfigureAwait(false);
+            return envelope;
+        }
+
+        return await ArtifactSigner.SignAsync(artifact.FullName, signer, fingerprint, label).ConfigureAwait(false);
     }
 }
