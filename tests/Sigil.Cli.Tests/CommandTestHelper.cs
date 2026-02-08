@@ -41,6 +41,8 @@ public static class CommandTestHelper
             rootCommand.Add(trustCommand);
             rootCommand.Add(DiscoverCommand.Create());
             rootCommand.Add(TimestampCommand.Create());
+            rootCommand.Add(AttestCommand.Create());
+            rootCommand.Add(VerifyAttestationCommand.Create());
 
             var config = new CommandLineConfiguration(rootCommand);
             var exitCode = await config.InvokeAsync(args);

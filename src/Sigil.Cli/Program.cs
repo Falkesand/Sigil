@@ -17,6 +17,8 @@ trustCommand.Add(TrustShowCommand.Create());
 rootCommand.Add(trustCommand);
 rootCommand.Add(DiscoverCommand.Create());
 rootCommand.Add(TimestampCommand.Create());
+rootCommand.Add(AttestCommand.Create());
+rootCommand.Add(VerifyAttestationCommand.Create());
 
 var config = new CommandLineConfiguration(rootCommand);
 return await config.InvokeAsync(args);
