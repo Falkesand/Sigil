@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: Restore
+        run: dotnet restore Sigil.slnx
+
+      - name: Build
+        run: dotnet build Sigil.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Sigil.slnx -c Release --no-build
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+        self_contained: [true, false]
+        include:
+          - rid: win-x64
+            os: windows-latest
+            archive: zip
+          - rid: linux-x64
+            os: ubuntu-latest
+            archive: tar
+          - rid: linux-arm64
+            os: ubuntu-latest
+            archive: tar
+          - rid: osx-x64
+            os: macos-latest
+            archive: tar
+          - rid: osx-arm64
+            os: macos-latest
+            archive: tar
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: Extract version and variant suffix
+        id: meta
+        shell: bash
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Invalid version format: $ver"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if [ "${{ matrix.self_contained }}" = "true" ]; then
+            echo "suffix=" >> "$GITHUB_OUTPUT"
+          else
+            echo "suffix=-fdd" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        run: >-
+          dotnet publish src/Sigil.Cli/Sigil.Cli.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          /p:PublishStandalone=true
+          /p:SelfContained=${{ matrix.self_contained }}
+          /p:Version=${{ steps.meta.outputs.version }}
+          -o ./publish
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: tar -czf sigil-${{ steps.meta.outputs.version }}-${{ matrix.rid }}${{ steps.meta.outputs.suffix }}.tar.gz -C ./publish .
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: Compress-Archive -Path ./publish/* -DestinationPath sigil-${{ steps.meta.outputs.version }}-${{ matrix.rid }}${{ steps.meta.outputs.suffix }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: sigil-${{ matrix.rid }}${{ steps.meta.outputs.suffix }}
+          path: sigil-${{ steps.meta.outputs.version }}-${{ matrix.rid }}${{ steps.meta.outputs.suffix }}.*
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum sigil-*.tar.gz sigil-*.zip > checksums.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/sigil-*
+            artifacts/checksums.sha256
