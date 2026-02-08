@@ -6,6 +6,7 @@
     <Project Path="src/Sigil.Vault.Azure/Sigil.Vault.Azure.csproj" />
     <Project Path="src/Sigil.Vault.Aws/Sigil.Vault.Aws.csproj" />
     <Project Path="src/Sigil.Vault.Gcp/Sigil.Vault.Gcp.csproj" />
+    <Project Path="src/Sigil.Vault.Pkcs11/Sigil.Vault.Pkcs11.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Sigil.Cli.Tests/Sigil.Cli.Tests.csproj" />
@@ -15,5 +16,6 @@
     <Project Path="tests/Sigil.Vault.Azure.Tests/Sigil.Vault.Azure.Tests.csproj" />
     <Project Path="tests/Sigil.Vault.Aws.Tests/Sigil.Vault.Aws.Tests.csproj" />
     <Project Path="tests/Sigil.Vault.Gcp.Tests/Sigil.Vault.Gcp.Tests.csproj" />
+    <Project Path="tests/Sigil.Vault.Pkcs11.Tests/Sigil.Vault.Pkcs11.Tests.csproj" />
   </Folder>
 </Solution>

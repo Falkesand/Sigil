@@ -32,6 +32,7 @@
     <ProjectReference Include="..\Sigil.Vault.Azure\Sigil.Vault.Azure.csproj" />
     <ProjectReference Include="..\Sigil.Vault.Aws\Sigil.Vault.Aws.csproj" />
     <ProjectReference Include="..\Sigil.Vault.Gcp\Sigil.Vault.Gcp.csproj" />
+    <ProjectReference Include="..\Sigil.Vault.Pkcs11\Sigil.Vault.Pkcs11.csproj" />
   </ItemGroup>
 
   <ItemGroup>
