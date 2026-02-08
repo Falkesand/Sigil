@@ -13,6 +13,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Choose your algorithm](#choose-your-algorithm)
   - [Sign an SBOM](#sign-an-sbom)
   - [Sign with a vault key](#sign-with-a-vault-key)
+  - [Sign with a hardware token](#sign-with-a-hardware-token)
   - [Add a timestamp](#add-a-timestamp)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
@@ -32,6 +33,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Azure Key Vault](#azure-key-vault)
   - [AWS KMS](#aws-kms)
   - [Google Cloud KMS](#google-cloud-kms)
+  - [PKCS#11 hardware tokens](#pkcs11-hardware-tokens)
 - [Timestamping](#timestamping)
   - [Sign with a timestamp](#sign-with-a-timestamp)
   - [Timestamp an existing signature](#timestamp-an-existing-signature)
@@ -67,8 +69,8 @@ It works with any file: binaries, SBOMs, container images, config files, tarball
 | Needs internet | No | Yes | No | Depends |
 | Stores your email | No | Yes (public log) | Optional | Yes |
 | External dependencies | Zero | Many | Many | Many |
-| Key management | None (ephemeral), PEM files, or vault/KMS | Ephemeral | Complex | Complex |
-| Vault/KMS support | Yes (4 providers) | No | No | Partial |
+| Key management | None (ephemeral), PEM files, vault/KMS, or PKCS#11 | Ephemeral | Complex | Complex |
+| Vault/KMS support | Yes (4 cloud + PKCS#11) | PKCS#11 | No | Partial |
 | Works offline | Yes | No | Yes | Partial |
 | Hidden state on disk | None | None | `~/.gnupg/` | Varies |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
@@ -204,6 +206,24 @@ Signature: my-app.tar.gz.sig.json
 ```
 
 The private key never leaves the vault — only the signature is returned. Verification works identically (the public key is embedded in the envelope). See [Vault-backed signing](#vault-backed-signing) for setup details.
+
+### Sign with a hardware token
+
+When your private key lives on an HSM, YubiKey, or smart card:
+
+```
+sigil sign my-app.tar.gz --vault pkcs11 --vault-key "pkcs11:token=YubiKey;object=my-key"
+```
+
+```
+Signed: my-app.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:3d4e5f...
+Mode: vault (pkcs11)
+Signature: my-app.tar.gz.sig.json
+```
+
+The private key never leaves the hardware device. See [PKCS#11 hardware tokens](#pkcs11-hardware-tokens) for setup details.
 
 ### Add a timestamp
 
@@ -710,7 +730,7 @@ The `--discover` option supports all three schemes:
 
 ## Vault-backed signing
 
-When private keys must never leave a hardware security module or cloud KMS, Sigil delegates signing to the vault. The private key is never exposed to the signing tool — Sigil sends a hash to the vault, receives the signature, and embeds it in the envelope. Authentication uses environment variables — no hardcoded secrets. All vault API calls have a 30-second timeout.
+When private keys must never leave a hardware security module or cloud KMS, Sigil delegates signing to the vault. The private key is never exposed to the signing tool — Sigil sends data to the vault or hardware token, receives the signature, and embeds it in the envelope. Authentication uses environment variables — no hardcoded secrets. All vault API calls have a 30-second timeout.
 
 ### Supported providers
 
@@ -720,6 +740,7 @@ When private keys must never leave a hardware security module or cloud KMS, Sigi
 | Azure Key Vault | `azure` | Key name or full key URL | `DefaultAzureCredential` |
 | AWS KMS | `aws` | ARN, key ID, or `alias/<name>` | AWS credential chain |
 | Google Cloud KMS | `gcp` | Full resource name | Application Default Credentials |
+| PKCS#11 (HSM/YubiKey) | `pkcs11` | RFC 7512 URI or key label | PIN via env var or URI |
 
 ### HashiCorp Vault
 
@@ -853,6 +874,87 @@ Authentication uses Application Default Credentials: `GOOGLE_APPLICATION_CREDENT
 sigil sign release.tar.gz --vault gcp \
   --vault-key projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
 ```
+
+### PKCS#11 hardware tokens
+
+PKCS#11 is the standard interface for hardware security modules (HSMs), YubiKeys, smart cards, and other cryptographic tokens. The private key never leaves the device — Sigil sends data to the token for signing and receives the signature back.
+
+**Key reference formats:**
+
+```
+pkcs11:token=YubiKey;object=my-key                              # RFC 7512 URI (recommended)
+pkcs11:token=MyHSM;object=signing-key?module-path=/usr/lib/p11.so  # with explicit library path
+pkcs11:token=MyHSM;object=key1?pin-value=1234                   # with PIN in URI (not recommended)
+/usr/lib/softhsm/libsofthsm2.so;token=MyToken;object=my-key    # legacy path format
+my-key                                                           # plain key label (searches all tokens)
+```
+
+**Environment variables:**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PKCS11_LIBRARY` | Yes (unless in URI) | Path to the PKCS#11 shared library (`.so`/`.dll`/`.dylib`) |
+| `PKCS11_PIN` | No | Token PIN (if not in URI or `--passphrase`) |
+
+**PIN resolution order:** The PIN is resolved from the first available source:
+
+1. `pin-value` in the PKCS#11 URI
+2. `--passphrase` CLI option
+3. `PKCS11_PIN` environment variable
+4. No PIN (some tokens don't require one for signing)
+
+**Library path resolution:** The PKCS#11 library path is resolved from:
+
+1. `module-path` in the URI query string
+2. Library path in the legacy path format
+3. `PKCS11_LIBRARY` environment variable
+
+**Common PKCS#11 libraries:**
+
+| Device / Software | Library path |
+|-------------------|-------------|
+| SoftHSM2 (testing) | `/usr/lib/softhsm/libsofthsm2.so` |
+| YubiKey (macOS) | `/usr/local/lib/libykcs11.dylib` |
+| YubiKey (Linux) | `/usr/lib/libykcs11.so` |
+| OpenSC (smart cards) | `/usr/lib/opensc-pkcs11.so` |
+| Thales Luna HSM | `/usr/safenet/lunaclient/lib/libCryptoki2_64.so` |
+| AWS CloudHSM | `/opt/cloudhsm/lib/libcloudhsm_pkcs11.so` |
+
+**Example:**
+
+```bash
+# Linux / macOS
+export PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
+export PKCS11_PIN=1234
+
+# Windows (PowerShell)
+$env:PKCS11_LIBRARY = "C:\SoftHSM2\lib\softhsm2.dll"
+$env:PKCS11_PIN = "1234"
+
+# Windows (cmd)
+set PKCS11_LIBRARY=C:\SoftHSM2\lib\softhsm2.dll
+set PKCS11_PIN=1234
+```
+
+```
+sigil sign release.tar.gz --vault pkcs11 --vault-key "pkcs11:token=MyToken;object=my-key"
+sigil sign release.tar.gz --vault pkcs11 --vault-key my-key
+sigil trust sign trust.json --vault pkcs11 --vault-key "pkcs11:token=YubiKey;object=authority" -o trust-signed.json
+```
+
+**Supported algorithms:** The algorithm is auto-detected from the token's key type:
+
+| Token key type | Sigil algorithm |
+|---------------|-----------------|
+| EC P-256 | `ecdsa-p256` |
+| EC P-384 | `ecdsa-p384` |
+| RSA | `rsa-pss-sha256` |
+
+**Security notes:**
+
+- Avoid putting PINs in URIs for production use — prefer `PKCS11_PIN` or `--passphrase`
+- PINs in URIs may appear in shell history, process listings, and log files
+- The `--passphrase` option is reused for PKCS#11 PINs when using `--vault pkcs11`
 
 ## CLI reference
 
@@ -1026,6 +1128,13 @@ A typical GitHub Actions workflow using the local tool:
 
 ## What's coming
 
+- **Attestations (SLSA/in-toto)** — Signed build provenance statements following the in-toto attestation format.
+- **Policy engine** — Declarative verification rules (min signatures, required timestamps, algorithm restrictions).
+- **Transparency log** — Append-only Merkle tree log for auditable signing events.
+- **Git commit signing** — Drop-in replacement for GPG via `gpg.program` / `gpg.format`.
+- **Container/OCI signing** — Sign container images in OCI registries using the referrers API.
+- **Signature revocation** — Revoke individual signatures or keys without re-signing the trust bundle.
+- **Batch/manifest signing** — Sign multiple files in one operation with a single envelope.
 - **Ed25519** — When the .NET SDK ships the native API.
 
 ## Install
