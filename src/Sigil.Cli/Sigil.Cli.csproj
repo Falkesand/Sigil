@@ -7,6 +7,8 @@
     <ToolCommandName>sigil</ToolCommandName>
     <PackageId>Sigil.Sign</PackageId>
     <Description>CLI tool for signing and verifying software artifacts with distributed trust</Description>
+    <PackageTags>signing;trust;security;supply-chain;verification;sbom;cli</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(PublishStandalone)' == 'true'">
@@ -19,6 +21,10 @@
   <PropertyGroup Condition="'$(PublishStandalone)' == 'true' And '$(SelfContained)' == 'true'">
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Sigil.Core\Sigil.Core.csproj" />
