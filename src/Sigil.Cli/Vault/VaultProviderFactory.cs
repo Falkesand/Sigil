@@ -3,6 +3,7 @@ using Sigil.Vault.Aws;
 using Sigil.Vault.Azure;
 using Sigil.Vault.Gcp;
 using Sigil.Vault.HashiCorp;
+using Sigil.Vault.Pkcs11;
 
 namespace Sigil.Cli.Vault;
 
@@ -16,9 +17,10 @@ internal static class VaultProviderFactory
             "azure" => CreateAzure(),
             "aws" => CreateAws(),
             "gcp" => CreateGcp(),
+            "pkcs11" => CreatePkcs11(),
             _ => VaultResult<IKeyProvider>.Fail(
                 VaultErrorKind.ConfigurationError,
-                $"Unknown vault provider: {vaultName}. Supported: hashicorp, azure, aws, gcp")
+                $"Unknown vault provider: {vaultName}. Supported: hashicorp, azure, aws, gcp, pkcs11")
         };
     }
 
@@ -47,6 +49,14 @@ internal static class VaultProviderFactory
     private static VaultResult<IKeyProvider> CreateGcp()
     {
         var result = GcpKmsKeyProvider.Create();
+        if (!result.IsSuccess)
+            return VaultResult<IKeyProvider>.Fail(result.ErrorKind, result.ErrorMessage);
+        return VaultResult<IKeyProvider>.Ok(result.Value);
+    }
+
+    private static VaultResult<IKeyProvider> CreatePkcs11()
+    {
+        var result = Pkcs11KeyProvider.CreateFromEnvironment();
         if (!result.IsSuccess)
             return VaultResult<IKeyProvider>.Fail(result.ErrorKind, result.ErrorMessage);
         return VaultResult<IKeyProvider>.Ok(result.Value);
