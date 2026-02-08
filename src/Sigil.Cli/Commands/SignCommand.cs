@@ -1,7 +1,4 @@
 using System.CommandLine;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text;
 using Sigil.Cli.Vault;
 using Sigil.Crypto;
 using Sigil.Keys;
@@ -108,110 +105,55 @@ public static class SignCommand
             ISigner localSigner;
             bool isEphemeral;
 
-            char[]? passphraseChars = passphrase?.ToCharArray();
-
-            try
+            if (keyPath is not null)
             {
-                if (keyPath is not null)
+                var loadResult = PemSignerLoader.Load(keyPath, passphrase, algorithmName);
+                if (!loadResult.IsSuccess)
                 {
-                    // Persistent mode: load from PEM file with auto-detection
-                    if (!File.Exists(keyPath))
-                    {
-                        Console.Error.WriteLine($"Key file not found: {keyPath}");
-                        return;
-                    }
-
-                    // Parse algorithm hint if provided
-                    SigningAlgorithm? algorithmHint = null;
-                    if (algorithmName is not null)
-                    {
-                        try
-                        {
-                            algorithmHint = SigningAlgorithmExtensions.ParseAlgorithm(algorithmName);
-                        }
-                        catch (ArgumentException)
-                        {
-                            Console.Error.WriteLine($"Unknown algorithm: {algorithmName}");
-                            Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
-                            return;
-                        }
-                    }
-
-                    byte[] pemBytes = File.ReadAllBytes(keyPath);
-                    char[] pemChars = Encoding.UTF8.GetChars(pemBytes);
-                    try
-                    {
-                        bool isEncrypted = pemChars.AsSpan().IndexOf("ENCRYPTED".AsSpan()) >= 0;
-                        if (isEncrypted)
-                        {
-                            if (passphraseChars is null || passphraseChars.Length == 0)
-                            {
-                                Console.Error.WriteLine("Key is encrypted. Provide --passphrase.");
-                                return;
-                            }
-                            localSigner = SignerFactory.CreateFromPem(pemChars, passphraseChars, algorithmHint);
-                        }
-                        else
-                        {
-                            localSigner = SignerFactory.CreateFromPem(pemChars);
-                        }
-                    }
-                    catch (CryptographicException ex)
-                    {
-                        Console.Error.WriteLine($"Failed to load key: {ex.Message}");
-                        return;
-                    }
-                    finally
-                    {
-                        CryptographicOperations.ZeroMemory(pemBytes);
-                        CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(pemChars.AsSpan()));
-                    }
-
-                    isEphemeral = false;
-                }
-                else
-                {
-                    // Ephemeral mode: generate key in memory
-                    var ephemeralAlgorithmName = algorithmName ?? "ecdsa-p256";
-                    SigningAlgorithm algorithm;
-                    try
-                    {
-                        algorithm = SigningAlgorithmExtensions.ParseAlgorithm(ephemeralAlgorithmName);
-                    }
-                    catch (ArgumentException)
-                    {
-                        Console.Error.WriteLine($"Unknown algorithm: {ephemeralAlgorithmName}");
-                        Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
-                        return;
-                    }
-
-                    localSigner = SignerFactory.Generate(algorithm);
-                    isEphemeral = true;
+                    Console.Error.WriteLine(loadResult.ErrorMessage);
+                    return;
                 }
 
-                using (localSigner)
-                {
-                    var fingerprint = KeyFingerprint.Compute(localSigner.PublicKey);
-                    var envelope = ArtifactSigner.Sign(artifact.FullName, localSigner, fingerprint, label);
-
-                    var outputPath = output ?? artifact.FullName + ".sig.json";
-                    var json = ArtifactSigner.Serialize(envelope);
-                    File.WriteAllText(outputPath, json);
-
-                    Console.WriteLine($"Signed: {artifact.Name}");
-                    Console.WriteLine($"Algorithm: {localSigner.Algorithm.ToCanonicalName()}");
-                    Console.WriteLine($"Key: {fingerprint.ShortId}...");
-                    if (isEphemeral)
-                        Console.WriteLine("Mode: ephemeral (key not persisted)");
-                    if (envelope.Subject.Metadata?.TryGetValue("sbom.format", out var sbomFormat) == true)
-                        Console.WriteLine($"Format: {sbomFormat} ({envelope.Subject.MediaType})");
-                    Console.WriteLine($"Signature: {outputPath}");
-                }
+                localSigner = loadResult.Value;
+                isEphemeral = false;
             }
-            finally
+            else
             {
-                if (passphraseChars is not null)
-                    CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(passphraseChars.AsSpan()));
+                // Ephemeral mode: generate key in memory
+                var ephemeralAlgorithmName = algorithmName ?? "ecdsa-p256";
+                SigningAlgorithm algorithm;
+                try
+                {
+                    algorithm = SigningAlgorithmExtensions.ParseAlgorithm(ephemeralAlgorithmName);
+                }
+                catch (ArgumentException)
+                {
+                    Console.Error.WriteLine($"Unknown algorithm: {ephemeralAlgorithmName}");
+                    Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
+                    return;
+                }
+
+                localSigner = SignerFactory.Generate(algorithm);
+                isEphemeral = true;
+            }
+
+            using (localSigner)
+            {
+                var fingerprint = KeyFingerprint.Compute(localSigner.PublicKey);
+                var envelope = ArtifactSigner.Sign(artifact.FullName, localSigner, fingerprint, label);
+
+                var outputPath = output ?? artifact.FullName + ".sig.json";
+                var json = ArtifactSigner.Serialize(envelope);
+                File.WriteAllText(outputPath, json);
+
+                Console.WriteLine($"Signed: {artifact.Name}");
+                Console.WriteLine($"Algorithm: {localSigner.Algorithm.ToCanonicalName()}");
+                Console.WriteLine($"Key: {fingerprint.ShortId}...");
+                if (isEphemeral)
+                    Console.WriteLine("Mode: ephemeral (key not persisted)");
+                if (envelope.Subject.Metadata?.TryGetValue("sbom.format", out var sbomFormat) == true)
+                    Console.WriteLine($"Format: {sbomFormat} ({envelope.Subject.MediaType})");
+                Console.WriteLine($"Signature: {outputPath}");
             }
         });
 
