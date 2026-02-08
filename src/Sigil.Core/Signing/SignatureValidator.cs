@@ -1,5 +1,6 @@
 using Sigil.Crypto;
 using Sigil.Keys;
+using Sigil.Timestamping;
 
 namespace Sigil.Signing;
 
@@ -13,6 +14,7 @@ public sealed class SignatureVerificationResult
     public string? Algorithm { get; init; }
     public string? Label { get; init; }
     public string? Error { get; init; }
+    public TimestampVerificationInfo? TimestampInfo { get; init; }
 }
 
 /// <summary>
@@ -132,13 +134,20 @@ public static class SignatureValidator
             var signatureBytes = Convert.FromBase64String(sig.Value);
             var isValid = verifier.Verify(signingPayload, signatureBytes);
 
+            TimestampVerificationInfo? timestampInfo = null;
+            if (isValid && sig.TimestampToken is not null)
+            {
+                timestampInfo = TimestampValidator.Validate(sig.TimestampToken, signatureBytes);
+            }
+
             return new SignatureVerificationResult
             {
                 KeyId = sig.KeyId,
                 IsValid = isValid,
                 Algorithm = sig.Algorithm,
                 Label = sig.Label,
-                Error = isValid ? null : "Signature verification failed."
+                Error = isValid ? null : "Signature verification failed.",
+                TimestampInfo = timestampInfo
             };
         }
         catch (Exception ex)

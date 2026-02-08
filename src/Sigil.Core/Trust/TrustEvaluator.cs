@@ -1,5 +1,6 @@
 using System.Globalization;
 using Sigil.Signing;
+using Sigil.Timestamping;
 
 namespace Sigil.Trust;
 
@@ -69,8 +70,9 @@ public static class TrustEvaluator
         string? artifactName,
         DateTimeOffset now)
     {
-        // Check expiry
-        if (IsExpired(keyEntry.NotAfter, now))
+        // Check expiry — a valid timestamp before expiry overrides the expired decision
+        if (IsExpired(keyEntry.NotAfter, now) &&
+            !IsTimestampBeforeExpiry(sig.TimestampInfo, keyEntry.NotAfter))
         {
             return new SignatureTrustResult
             {
@@ -121,12 +123,14 @@ public static class TrustEvaluator
             if (endorserKey is null)
                 continue;
 
-            // Endorser must not be expired
-            if (IsExpired(endorserKey.NotAfter, now))
+            // Endorser must not be expired (unless timestamp proves signature predates expiry)
+            if (IsExpired(endorserKey.NotAfter, now) &&
+                !IsTimestampBeforeExpiry(sig.TimestampInfo, endorserKey.NotAfter))
                 continue;
 
-            // Endorsement itself must not be expired
-            if (IsExpired(endorsement.NotAfter, now))
+            // Endorsement itself must not be expired (unless timestamp proves signature predates expiry)
+            if (IsExpired(endorsement.NotAfter, now) &&
+                !IsTimestampBeforeExpiry(sig.TimestampInfo, endorsement.NotAfter))
                 continue;
 
             // Check scope intersection (endorsement scopes restrict further)
@@ -164,4 +168,15 @@ public static class TrustEvaluator
         return false;
     }
 
+    private static bool IsTimestampBeforeExpiry(TimestampVerificationInfo? tsInfo, string? notAfter)
+    {
+        if (tsInfo is not { IsValid: true })
+            return false;
+        if (notAfter is null)
+            return false;
+        if (!DateTimeOffset.TryParse(notAfter, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal, out var expiry))
+            return false;
+        return tsInfo.Timestamp < expiry;
+    }
 }

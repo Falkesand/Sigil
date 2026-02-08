@@ -51,4 +51,7 @@ public sealed class SignatureEntry
 
     [JsonPropertyName("label")]
     public string? Label { get; init; }
+
+    [JsonPropertyName("timestampToken")]
+    public string? TimestampToken { get; init; }
 }

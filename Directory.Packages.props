@@ -12,5 +12,6 @@
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="AWSSDK.KeyManagementService" Version="4.0.8.8" />
     <PackageVersion Include="Google.Cloud.Kms.V1" Version="3.19.0" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.0-preview.5.25277.114" />
   </ItemGroup>
 </Project>
