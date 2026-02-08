@@ -9,6 +9,14 @@
     <Description>CLI tool for signing and verifying software artifacts with distributed trust</Description>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(PublishStandalone)' == 'true'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PackAsTool>false</PackAsTool>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Sigil.Core\Sigil.Core.csproj" />
     <ProjectReference Include="..\Sigil.Vault.HashiCorp\Sigil.Vault.HashiCorp.csproj" />

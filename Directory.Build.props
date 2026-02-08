@@ -9,4 +9,8 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishStandalone)' == 'true'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
 </Project>
