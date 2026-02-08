@@ -35,6 +35,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        rid: [win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+        self_contained: [true, false]
         include:
           - rid: win-x64
             os: windows-latest
@@ -64,8 +66,8 @@ jobs:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
 
-      - name: Extract version from tag
-        id: version
+      - name: Extract version and variant suffix
+        id: meta
         shell: bash
         run: |
           ver="${GITHUB_REF_NAME#v}"
@@ -74,6 +76,11 @@ jobs:
             exit 1
           fi
           echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if [ "${{ matrix.self_contained }}" = "true" ]; then
+            echo "suffix=" >> "$GITHUB_OUTPUT"
+          else
+            echo "suffix=-fdd" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish
         run: >-
@@ -81,24 +88,25 @@ jobs:
           -c Release
           -r ${{ matrix.rid }}
           /p:PublishStandalone=true
-          /p:Version=${{ steps.version.outputs.version }}
+          /p:SelfContained=${{ matrix.self_contained }}
+          /p:Version=${{ steps.meta.outputs.version }}
           -o ./publish
 
       - name: Package (tar.gz)
         if: matrix.archive == 'tar'
         shell: bash
-        run: tar -czf sigil-${{ steps.version.outputs.version }}-${{ matrix.rid }}.tar.gz -C ./publish .
+        run: tar -czf sigil-${{ steps.meta.outputs.version }}-${{ matrix.rid }}${{ steps.meta.outputs.suffix }}.tar.gz -C ./publish .
 
       - name: Package (zip)
         if: matrix.archive == 'zip'
         shell: pwsh
-        run: Compress-Archive -Path ./publish/* -DestinationPath sigil-${{ steps.version.outputs.version }}-${{ matrix.rid }}.zip
+        run: Compress-Archive -Path ./publish/* -DestinationPath sigil-${{ steps.meta.outputs.version }}-${{ matrix.rid }}${{ steps.meta.outputs.suffix }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: sigil-${{ matrix.rid }}
-          path: sigil-${{ steps.version.outputs.version }}-${{ matrix.rid }}.*
+          name: sigil-${{ matrix.rid }}${{ steps.meta.outputs.suffix }}
+          path: sigil-${{ steps.meta.outputs.version }}-${{ matrix.rid }}${{ steps.meta.outputs.suffix }}.*
           retention-days: 1
 
   release:

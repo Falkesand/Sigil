@@ -13,8 +13,11 @@
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PackAsTool>false</PackAsTool>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishStandalone)' == 'true' And '$(SelfContained)' == 'true'">
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
