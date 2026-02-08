@@ -134,6 +134,11 @@ public static class VerifyCommand
                     if (sig.Error is not null)
                         Console.WriteLine($"           {sig.Error}");
                 }
+
+                if (sig.TimestampInfo is { IsValid: true } ts)
+                    Console.WriteLine($"           Timestamp: {ts.Timestamp:yyyy-MM-ddTHH:mm:ssZ} (verified)");
+                else if (sig.TimestampInfo is { IsValid: false } tsErr)
+                    Console.WriteLine($"           Timestamp: INVALID ({tsErr.Error})");
             }
 
             if (trustResult is not null)

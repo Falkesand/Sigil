@@ -3,6 +3,7 @@ using Sigil.Cli.Vault;
 using Sigil.Crypto;
 using Sigil.Keys;
 using Sigil.Signing;
+using Sigil.Timestamping;
 
 namespace Sigil.Cli.Commands;
 
@@ -18,6 +19,7 @@ public static class SignCommand
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ephemeral default: ecdsa-p256; also used as hint for encrypted PEM detection)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
+        var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
 
         var cmd = new Command("sign", "Sign an artifact and produce a detached signature envelope");
         cmd.Add(artifactArg);
@@ -28,6 +30,7 @@ public static class SignCommand
         cmd.Add(algorithmOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
+        cmd.Add(timestampOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -39,6 +42,7 @@ public static class SignCommand
             var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
+            var tsaUrl = parseResult.GetValue(timestampOption);
 
             if (!artifact.Exists)
             {
@@ -88,6 +92,9 @@ public static class SignCommand
 
                 var outputPath = output ?? artifact.FullName + ".sig.json";
                 var envelope = await LoadOrCreateEnvelopeAsync(artifact, outputPath, signer, fingerprint, label);
+
+                await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
 
@@ -143,6 +150,9 @@ public static class SignCommand
 
                 var outputPath = output ?? artifact.FullName + ".sig.json";
                 var envelope = LoadOrCreateEnvelope(artifact, outputPath, localSigner, fingerprint, label);
+
+                await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
 
@@ -173,6 +183,35 @@ public static class SignCommand
         }
 
         return ArtifactSigner.Sign(artifact.FullName, signer, fingerprint, label);
+    }
+
+    private static async Task ApplyTimestampIfRequestedAsync(SignatureEnvelope envelope, string? tsaUrl)
+    {
+        if (tsaUrl is null)
+            return;
+
+        if (!Uri.TryCreate(tsaUrl, UriKind.Absolute, out var tsaUri))
+        {
+            Console.Error.WriteLine($"Warning: Invalid TSA URL: {tsaUrl}. Signature saved without timestamp.");
+            return;
+        }
+
+        var lastEntry = envelope.Signatures[^1];
+        var result = await TimestampApplier.ApplyAsync(lastEntry, tsaUri).ConfigureAwait(false);
+
+        if (result.IsSuccess)
+        {
+            envelope.Signatures[^1] = result.Value;
+            var info = TimestampValidator.Validate(result.Value.TimestampToken!, Convert.FromBase64String(result.Value.Value));
+            if (info.IsValid)
+                Console.WriteLine($"Timestamp: {info.Timestamp:yyyy-MM-ddTHH:mm:ssZ} (verified)");
+            else
+                Console.Error.WriteLine($"Warning: Timestamp obtained but validation failed: {info.Error}");
+        }
+        else
+        {
+            Console.Error.WriteLine($"Warning: Timestamping failed ({result.ErrorMessage}). Signature saved without timestamp.");
+        }
     }
 
     private static async Task<SignatureEnvelope> LoadOrCreateEnvelopeAsync(
