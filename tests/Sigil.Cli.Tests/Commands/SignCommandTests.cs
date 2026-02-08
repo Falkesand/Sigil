@@ -1,0 +1,71 @@
+namespace Sigil.Cli.Tests.Commands;
+
+public class SignCommandTests : IDisposable
+{
+    private readonly string _tempDir;
+    private readonly string _artifactPath;
+
+    public SignCommandTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), "sigil-cli-test-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(_tempDir);
+        _artifactPath = Path.Combine(_tempDir, "test-artifact.txt");
+        File.WriteAllText(_artifactPath, "test artifact content");
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+            Directory.Delete(_tempDir, true);
+    }
+
+    [Fact]
+    public async Task Sign_produces_signature_file()
+    {
+        var result = await CommandTestHelper.InvokeAsync("sign", _artifactPath);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Signed:", result.StdOut);
+        Assert.True(File.Exists(_artifactPath + ".sig.json"), "Signature file should exist");
+    }
+
+    [Fact]
+    public async Task Sign_ephemeral_shows_mode()
+    {
+        var result = await CommandTestHelper.InvokeAsync("sign", _artifactPath);
+
+        Assert.Contains("ephemeral", result.StdOut);
+    }
+
+    [Fact]
+    public async Task Sign_with_persistent_key()
+    {
+        var prefix = Path.Combine(_tempDir, "key");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix);
+
+        var sigPath = Path.Combine(_tempDir, "test-artifact.txt.persistent.sig.json");
+        var result = await CommandTestHelper.InvokeAsync("sign", _artifactPath, "--key", prefix + ".pem", "--output", sigPath);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(sigPath));
+        Assert.DoesNotContain("ephemeral", result.StdOut);
+    }
+
+    [Fact]
+    public async Task Sign_missing_artifact_shows_error()
+    {
+        var result = await CommandTestHelper.InvokeAsync("sign", Path.Combine(_tempDir, "nonexistent.bin"));
+
+        Assert.Contains("Artifact not found", result.StdErr);
+    }
+
+    [Fact]
+    public async Task Sign_custom_output_path()
+    {
+        var customPath = Path.Combine(_tempDir, "custom.sig.json");
+        var result = await CommandTestHelper.InvokeAsync("sign", _artifactPath, "--output", customPath);
+
+        Assert.True(File.Exists(customPath));
+        Assert.Contains("Signature:", result.StdOut);
+    }
+}

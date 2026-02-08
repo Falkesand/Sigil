@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Sigil.Discovery;
 using Sigil.Signing;
 using Sigil.Trust;
 
@@ -12,19 +13,29 @@ public static class VerifyCommand
         var signatureOption = new Option<string?>("--signature") { Description = "Path to the signature file (default: <artifact>.sig.json)" };
         var trustBundleOption = new Option<string?>("--trust-bundle") { Description = "Path to a signed trust bundle for trust evaluation" };
         var authorityOption = new Option<string?>("--authority") { Description = "Expected authority fingerprint for the trust bundle" };
+        var discoverOption = new Option<string?>("--discover") { Description = "Discover trust bundle from URI (well-known URL, dns:domain, or git:url)" };
 
         var cmd = new Command("verify", "Verify the signature of an artifact");
         cmd.Add(artifactArg);
         cmd.Add(signatureOption);
         cmd.Add(trustBundleOption);
         cmd.Add(authorityOption);
+        cmd.Add(discoverOption);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
             var artifact = parseResult.GetValue(artifactArg)!;
             var signaturePath = parseResult.GetValue(signatureOption);
             var trustBundlePath = parseResult.GetValue(trustBundleOption);
             var authority = parseResult.GetValue(authorityOption);
+            var discoverUri = parseResult.GetValue(discoverOption);
+
+            // Mutual exclusion check
+            if (trustBundlePath is not null && discoverUri is not null)
+            {
+                Console.Error.WriteLine("--trust-bundle and --discover are mutually exclusive.");
+                return;
+            }
 
             if (!artifact.Exists)
             {
@@ -70,9 +81,14 @@ public static class VerifyCommand
                     Console.WriteLine($"Components: {compCount}");
             }
 
-            // Trust evaluation if bundle provided
+            // Discovery-based trust evaluation
             TrustEvaluationResult? trustResult = null;
-            if (trustBundlePath is not null)
+            if (discoverUri is not null)
+            {
+                trustResult = await DiscoverAndEvaluateTrust(discoverUri, authority, result, envelope.Subject.Name);
+            }
+            // File-based trust evaluation
+            else if (trustBundlePath is not null)
             {
                 trustResult = EvaluateTrust(trustBundlePath, authority, result, envelope.Subject.Name);
             }
@@ -141,6 +157,62 @@ public static class VerifyCommand
         });
 
         return cmd;
+    }
+
+    private static async Task<TrustEvaluationResult?> DiscoverAndEvaluateTrust(
+        string discoverUri,
+        string? authority,
+        VerificationResult verification,
+        string? artifactName)
+    {
+        var dispatcher = new DiscoveryDispatcher();
+        var discoveryResult = await dispatcher.ResolveAsync(discoverUri);
+
+        if (!discoveryResult.IsSuccess)
+        {
+            Console.Error.WriteLine($"Discovery failed: {discoveryResult.ErrorMessage}");
+            return null;
+        }
+
+        var bundleJson = discoveryResult.Value;
+
+        // Deserialize to extract authority from bundle signature if not provided
+        var deserializeResult = BundleSigner.Deserialize(bundleJson);
+        if (!deserializeResult.IsSuccess)
+        {
+            Console.Error.WriteLine($"Failed to parse discovered trust bundle: {deserializeResult.ErrorMessage}");
+            return null;
+        }
+
+        var bundle = deserializeResult.Value;
+
+        // Auto-extract authority from bundle signature when --authority not specified
+        var effectiveAuthority = authority;
+        if (effectiveAuthority is null)
+        {
+            if (bundle.Signature is null)
+            {
+                Console.Error.WriteLine("Discovered trust bundle is unsigned. Use --authority or sign the bundle.");
+                return null;
+            }
+            effectiveAuthority = bundle.Signature.KeyId;
+        }
+
+        // Verify bundle signature
+        var verifyResult = BundleSigner.Verify(bundleJson, effectiveAuthority);
+        if (!verifyResult.IsSuccess)
+        {
+            Console.Error.WriteLine($"Trust bundle verification failed: {verifyResult.ErrorMessage}");
+            return null;
+        }
+
+        if (!verifyResult.Value)
+        {
+            Console.Error.WriteLine("Trust bundle signature is invalid.");
+            return null;
+        }
+
+        return TrustEvaluator.Evaluate(verification, bundle, artifactName);
     }
 
     private static TrustEvaluationResult? EvaluateTrust(
