@@ -2,6 +2,39 @@
 
 Cryptographic signing and verification for any file. No cloud, no accounts, no dependencies beyond the .NET BCL.
 
+## Table of contents
+
+- [What it does](#what-it-does)
+- [Why not just use Sigstore/PGP/X.509?](#why-not-just-use-sigstorepgpx509)
+- [Quick start](#quick-start)
+  - [Sign a file](#sign-a-file-ephemeral--zero-setup)
+  - [Verify a file](#verify-a-file)
+  - [Sign with a persistent key](#sign-with-a-persistent-key-for-identity)
+  - [Choose your algorithm](#choose-your-algorithm)
+  - [Sign an SBOM](#sign-an-sbom)
+- [Ephemeral vs persistent](#ephemeral-vs-persistent)
+- [Envelope format](#envelope-format)
+- [Multiple signatures](#multiple-signatures)
+- [How it works](#how-it-works)
+- [Trust bundles](#trust-bundles)
+  - [The problem trust bundles solve](#the-problem-trust-bundles-solve)
+  - [Creating a trust bundle](#creating-a-trust-bundle)
+  - [Verifying with trust](#verifying-with-trust)
+  - [Scopes](#scopes)
+  - [Endorsements](#endorsements)
+  - [Viewing a bundle](#viewing-a-bundle)
+  - [How trust evaluation works](#how-trust-evaluation-works)
+  - [Trust bundle format](#trust-bundle-format)
+- [Discovery](#discovery)
+  - [Well-known URLs](#well-known-urls)
+  - [DNS TXT records](#dns-txt-records)
+  - [Git repositories](#git-repositories)
+  - [Verify with discovery](#verify-with-discovery)
+- [CLI reference](#cli-reference)
+- [What's coming](#whats-coming)
+- [Install](#install)
+- [License](#license)
+
 ## What it does
 
 Sigil lets you **sign files** and **verify signatures**. That's it.
@@ -432,18 +465,106 @@ When you pass `--trust-bundle` and `--authority` to `sigil verify`, here's what 
 
 The `signature` field covers everything above it. When the bundle is signed, Sigil computes the JCS-canonicalized JSON of everything except `signature`, then signs that with the authority key.
 
+## Discovery
+
+Trust bundles are useful, but you still need to distribute them — copy files, share paths, configure CI. Discovery automates this. Organizations publish trust bundles at standard locations, and Sigil fetches them automatically.
+
+Three discovery methods are supported, all using BCL only (zero external dependencies):
+
+### Well-known URLs
+
+Publish your trust bundle at `https://example.com/.well-known/sigil/trust.json`. Anyone can discover it:
+
+```
+sigil discover well-known example.com
+```
+
+```
+Bundle: my-project
+Keys: 3
+Signature: SIGNED
+```
+
+Save it locally with `-o`:
+
+```
+sigil discover well-known example.com -o trust.json
+```
+
+### DNS TXT records
+
+Add a TXT record at `_sigil.example.com`:
+
+```
+_sigil.example.com. IN TXT "v=sigil1 bundle=https://example.com/.well-known/sigil/trust.json"
+```
+
+Then discover via DNS:
+
+```
+sigil discover dns example.com
+```
+
+Sigil sends a raw UDP DNS query (no external resolver library), parses the TXT record, and fetches the bundle from the URL.
+
+### Git repositories
+
+Store your trust bundle in a git repository at `.sigil/trust.json` or `trust.json` in the repo root:
+
+```
+sigil discover git https://github.com/org/trust-bundles.git
+```
+
+Use a URL fragment to specify a branch or tag:
+
+```
+sigil discover git https://github.com/org/trust-bundles.git#v2
+```
+
+Sigil performs a shallow clone (`--depth 1`), reads the bundle, and cleans up the temporary directory.
+
+### Verify with discovery
+
+Instead of manually downloading a trust bundle, you can pass `--discover` directly to `sigil verify`:
+
+```
+sigil verify release.tar.gz --discover example.com
+```
+
+This is equivalent to downloading the bundle and passing `--trust-bundle`, but without the manual step. The authority fingerprint is auto-extracted from the bundle's signature — if the bundle is signed, you don't need to specify `--authority`.
+
+You can still override the authority if needed:
+
+```
+sigil verify release.tar.gz --discover example.com --authority sha256:def456...
+```
+
+`--discover` and `--trust-bundle` are mutually exclusive — you pick one or the other. If discovery fails, Sigil reports the error and exits (it doesn't fall back to no-trust mode, since you explicitly asked for trust evaluation).
+
+The `--discover` option supports all three schemes:
+
+| Input | Method |
+|-------|--------|
+| `example.com` | Well-known URL |
+| `https://example.com/trust.json` | Direct HTTPS fetch |
+| `dns:example.com` | DNS TXT lookup |
+| `git:https://github.com/org/repo.git` | Git clone |
+
 ## CLI reference
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
 sigil sign <file> [--key <private.pem>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name]
-sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint]
+sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri]
 sigil trust create --name <name> [-o path] [--description "text"]
 sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
 sigil trust remove <bundle> --fingerprint <fp>
 sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
 sigil trust sign <bundle> --key <private.pem> [-o path] [--passphrase "pass"]
 sigil trust show <bundle>
+sigil discover well-known <domain> [-o path]
+sigil discover dns <domain> [-o path]
+sigil discover git <url> [-o path]
 ```
 
 **generate**: Create a key pair for persistent signing.
@@ -463,6 +584,8 @@ sigil trust show <bundle>
 - Algorithm is read from the envelope — works with any supported algorithm
 - SBOM metadata is displayed when present in the envelope
 - `--trust-bundle` and `--authority` enable trust evaluation on top of crypto verification
+- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
+- When using `--discover`, authority is auto-extracted from the bundle's signature if `--authority` is omitted
 
 **trust create**: Create an empty unsigned trust bundle.
 
@@ -474,10 +597,15 @@ sigil trust show <bundle>
 
 **trust show**: Display the contents of a trust bundle (keys, endorsements, signature status).
 
+**discover well-known**: Fetch a trust bundle from `https://domain/.well-known/sigil/trust.json`.
+
+**discover dns**: Look up `_sigil.domain` TXT records for a bundle URL, then fetch it.
+
+**discover git**: Shallow-clone a git repository and read `.sigil/trust.json` or `trust.json`. Use `#branch` in the URL for a specific branch or tag.
+
 ## What's coming
 
 - **Ed25519** — When the .NET SDK ships the native API.
-- **Discovery** — Optional well-known URLs, DNS records, and git-based trust bundles.
 
 ## Install
 
