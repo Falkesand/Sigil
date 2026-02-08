@@ -11,6 +11,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Sigil.Core\Sigil.Core.csproj" />
+    <ProjectReference Include="..\Sigil.Vault.HashiCorp\Sigil.Vault.HashiCorp.csproj" />
+    <ProjectReference Include="..\Sigil.Vault.Azure\Sigil.Vault.Azure.csproj" />
+    <ProjectReference Include="..\Sigil.Vault.Aws\Sigil.Vault.Aws.csproj" />
+    <ProjectReference Include="..\Sigil.Vault.Gcp\Sigil.Vault.Gcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

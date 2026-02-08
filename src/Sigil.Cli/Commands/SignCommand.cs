@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using Sigil.Cli.Vault;
 using Sigil.Crypto;
 using Sigil.Keys;
 using Sigil.Signing;
@@ -18,6 +19,8 @@ public static class SignCommand
         var labelOption = new Option<string?>("--label") { Description = "Label for this signature" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the signing key is encrypted" };
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm for ephemeral mode (ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65)" };
+        var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
+        var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
 
         var cmd = new Command("sign", "Sign an artifact and produce a detached signature envelope");
         cmd.Add(artifactArg);
@@ -26,8 +29,10 @@ public static class SignCommand
         cmd.Add(labelOption);
         cmd.Add(passphraseOption);
         cmd.Add(algorithmOption);
+        cmd.Add(vaultOption);
+        cmd.Add(vaultKeyOption);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
             var artifact = parseResult.GetValue(artifactArg)!;
             var keyPath = parseResult.GetValue(keyOption);
@@ -35,6 +40,8 @@ public static class SignCommand
             var label = parseResult.GetValue(labelOption);
             var passphrase = parseResult.GetValue(passphraseOption);
             var algorithmName = parseResult.GetValue(algorithmOption) ?? "ecdsa-p256";
+            var vaultName = parseResult.GetValue(vaultOption);
+            var vaultKey = parseResult.GetValue(vaultKeyOption);
 
             if (!artifact.Exists)
             {
@@ -42,10 +49,65 @@ public static class SignCommand
                 return;
             }
 
-            ISigner signer;
+            // Validate mutual exclusivity
+            if (vaultName is not null && keyPath is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --key and --vault. Choose one signing method.");
+                return;
+            }
+
+            if (vaultName is not null && vaultKey is null)
+            {
+                Console.Error.WriteLine("--vault-key is required when using --vault.");
+                return;
+            }
+
+            if (vaultKey is not null && vaultName is null)
+            {
+                Console.Error.WriteLine("--vault is required when using --vault-key.");
+                return;
+            }
+
+            // Vault signing path
+            if (vaultName is not null)
+            {
+                var providerResult = VaultProviderFactory.Create(vaultName);
+                if (!providerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Vault error: {providerResult.ErrorMessage}");
+                    return;
+                }
+
+                await using var provider = providerResult.Value;
+                var signerResult = await provider.GetSignerAsync(vaultKey!);
+                if (!signerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Vault error: {signerResult.ErrorMessage}");
+                    return;
+                }
+
+                using var signer = signerResult.Value;
+                var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
+                var envelope = await ArtifactSigner.SignAsync(artifact.FullName, signer, fingerprint, label);
+
+                var outputPath = output ?? artifact.FullName + ".sig.json";
+                var json = ArtifactSigner.Serialize(envelope);
+                File.WriteAllText(outputPath, json);
+
+                Console.WriteLine($"Signed: {artifact.Name}");
+                Console.WriteLine($"Algorithm: {signer.Algorithm.ToCanonicalName()}");
+                Console.WriteLine($"Key: {fingerprint.ShortId}...");
+                Console.WriteLine($"Mode: vault ({vaultName})");
+                if (envelope.Subject.Metadata?.TryGetValue("sbom.format", out var sbomFormat) == true)
+                    Console.WriteLine($"Format: {sbomFormat} ({envelope.Subject.MediaType})");
+                Console.WriteLine($"Signature: {outputPath}");
+                return;
+            }
+
+            // Local signing paths (PEM or ephemeral)
+            ISigner localSigner;
             bool isEphemeral;
 
-            // Convert passphrase to char[] so we can zero it after use
             char[]? passphraseChars = passphrase?.ToCharArray();
 
             try
@@ -59,7 +121,6 @@ public static class SignCommand
                         return;
                     }
 
-                    // Read PEM as bytes → chars to avoid interned string copies
                     byte[] pemBytes = File.ReadAllBytes(keyPath);
                     char[] pemChars = Encoding.UTF8.GetChars(pemBytes);
                     try
@@ -72,11 +133,11 @@ public static class SignCommand
                                 Console.Error.WriteLine("Key is encrypted. Provide --passphrase.");
                                 return;
                             }
-                            signer = SignerFactory.CreateFromPem(pemChars, passphraseChars);
+                            localSigner = SignerFactory.CreateFromPem(pemChars, passphraseChars);
                         }
                         else
                         {
-                            signer = SignerFactory.CreateFromPem(pemChars);
+                            localSigner = SignerFactory.CreateFromPem(pemChars);
                         }
                     }
                     finally
@@ -102,21 +163,21 @@ public static class SignCommand
                         return;
                     }
 
-                    signer = SignerFactory.Generate(algorithm);
+                    localSigner = SignerFactory.Generate(algorithm);
                     isEphemeral = true;
                 }
 
-                using (signer)
+                using (localSigner)
                 {
-                    var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
-                    var envelope = ArtifactSigner.Sign(artifact.FullName, signer, fingerprint, label);
+                    var fingerprint = KeyFingerprint.Compute(localSigner.PublicKey);
+                    var envelope = ArtifactSigner.Sign(artifact.FullName, localSigner, fingerprint, label);
 
                     var outputPath = output ?? artifact.FullName + ".sig.json";
                     var json = ArtifactSigner.Serialize(envelope);
                     File.WriteAllText(outputPath, json);
 
                     Console.WriteLine($"Signed: {artifact.Name}");
-                    Console.WriteLine($"Algorithm: {signer.Algorithm.ToCanonicalName()}");
+                    Console.WriteLine($"Algorithm: {localSigner.Algorithm.ToCanonicalName()}");
                     Console.WriteLine($"Key: {fingerprint.ShortId}...");
                     if (isEphemeral)
                         Console.WriteLine("Mode: ephemeral (key not persisted)");

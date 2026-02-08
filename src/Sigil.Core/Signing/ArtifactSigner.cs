@@ -95,6 +95,85 @@ public static class ArtifactSigner
     }
 
     /// <summary>
+    /// Asynchronously signs an artifact file and produces a signature envelope.
+    /// Required for vault-backed signers where Sign() is not supported.
+    /// </summary>
+    public static async Task<SignatureEnvelope> SignAsync(
+        string artifactPath,
+        ISigner signer,
+        KeyFingerprint fingerprint,
+        string? label = null,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(artifactPath);
+        ArgumentNullException.ThrowIfNull(signer);
+
+        if (!File.Exists(artifactPath))
+            throw new FileNotFoundException("Artifact not found.", artifactPath);
+
+        var fileBytes = await File.ReadAllBytesAsync(artifactPath, ct).ConfigureAwait(false);
+        var (sha256, sha512) = HashAlgorithms.ComputeDigests(fileBytes);
+
+        var sbom = SbomDetector.TryDetect(fileBytes);
+
+        var envelope = new SignatureEnvelope
+        {
+            Subject = new SubjectDescriptor
+            {
+                Name = Path.GetFileName(artifactPath),
+                Digests = new Dictionary<string, string>
+                {
+                    ["sha256"] = sha256,
+                    ["sha512"] = sha512
+                },
+                MediaType = sbom?.MediaType,
+                Metadata = sbom?.ToDictionary()
+            }
+        };
+
+        await AppendSignatureAsync(envelope, fileBytes, signer, fingerprint, label, ct).ConfigureAwait(false);
+        return envelope;
+    }
+
+    /// <summary>
+    /// Asynchronously appends a new signature to an existing envelope.
+    /// Required for vault-backed signers where Sign() is not supported.
+    /// </summary>
+    public static async Task AppendSignatureAsync(
+        SignatureEnvelope envelope,
+        byte[] artifactBytes,
+        ISigner signer,
+        KeyFingerprint fingerprint,
+        string? label = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(artifactBytes);
+        ArgumentNullException.ThrowIfNull(signer);
+
+        var algorithm = signer.Algorithm.ToCanonicalName();
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ",
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        var payloadToSign = BuildSigningPayload(
+            envelope.Subject, artifactBytes, envelope.Version,
+            fingerprint.Value, algorithm, timestamp, label);
+        var signatureBytes = await signer.SignAsync(payloadToSign, ct).ConfigureAwait(false);
+
+        var entry = new SignatureEntry
+        {
+            KeyId = fingerprint.Value,
+            Algorithm = algorithm,
+            PublicKey = Convert.ToBase64String(signer.PublicKey),
+            Value = Convert.ToBase64String(signatureBytes),
+            Timestamp = timestamp,
+            Label = label
+        };
+
+        envelope.Signatures.Add(entry);
+    }
+
+    /// <summary>
     /// Serializes a signature envelope to JSON.
     /// </summary>
     public static string Serialize(SignatureEnvelope envelope)

@@ -7,5 +7,10 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageVersion Include="VaultSharp" Version="1.17.5.1" />
+    <PackageVersion Include="Azure.Security.KeyVault.Keys" Version="4.8.0" />
+    <PackageVersion Include="Azure.Identity" Version="1.13.2" />
+    <PackageVersion Include="AWSSDK.KeyManagementService" Version="4.0.8.8" />
+    <PackageVersion Include="Google.Cloud.Kms.V1" Version="3.19.0" />
   </ItemGroup>
 </Project>

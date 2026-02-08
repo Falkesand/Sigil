@@ -88,6 +88,11 @@ public sealed class MLDsa65Signer : ISigner
         return Encoding.UTF8.GetBytes(_key.ExportEncryptedPkcs8PrivateKeyPem(password, pbeParameters));
     }
 
+    public ValueTask<byte[]> SignAsync(byte[] data, CancellationToken cancellationToken = default)
+        => new(Sign(data));
+
+    public bool CanExportPrivateKey => true;
+
     public void Dispose()
     {
         if (!_disposed)
