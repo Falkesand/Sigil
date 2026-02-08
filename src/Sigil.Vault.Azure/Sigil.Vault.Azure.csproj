@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Sigil.Vault.Azure</RootNamespace>
+    <PackageId>Sigil.Vault.Azure</PackageId>
+    <Description>Azure Key Vault key provider for Sigil</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sigil.Core\Sigil.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Security.KeyVault.Keys" />
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+</Project>

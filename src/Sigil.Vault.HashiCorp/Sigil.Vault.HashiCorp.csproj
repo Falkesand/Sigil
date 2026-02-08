@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Sigil.Vault.HashiCorp</RootNamespace>
+    <PackageId>Sigil.Vault.HashiCorp</PackageId>
+    <Description>HashiCorp Vault key provider for Sigil</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sigil.Core\Sigil.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="VaultSharp" />
+  </ItemGroup>
+
+</Project>

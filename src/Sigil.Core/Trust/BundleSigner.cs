@@ -82,6 +82,36 @@ public static class BundleSigner
     }
 
     /// <summary>
+    /// Asynchronously signs a trust bundle. Required for vault-backed signers.
+    /// </summary>
+    public static async Task<TrustResult<TrustBundle>> SignAsync(
+        TrustBundle bundle, ISigner signer, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        ArgumentNullException.ThrowIfNull(signer);
+
+        var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ",
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        bundle.Signature = null;
+
+        var payloadBytes = BuildSigningPayload(bundle);
+        var signatureBytes = await signer.SignAsync(payloadBytes, ct).ConfigureAwait(false);
+
+        bundle.Signature = new BundleSignature
+        {
+            KeyId = fingerprint.Value,
+            Algorithm = signer.Algorithm.ToCanonicalName(),
+            PublicKey = Convert.ToBase64String(signer.PublicKey),
+            Value = Convert.ToBase64String(signatureBytes),
+            Timestamp = timestamp
+        };
+
+        return TrustResult<TrustBundle>.Ok(bundle);
+    }
+
+    /// <summary>
     /// Verifies a signed trust bundle against the expected authority fingerprint.
     /// Returns Ok(true) if valid, Ok(false) if signature doesn't verify,
     /// or Fail with error details.

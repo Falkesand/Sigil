@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Sigil.Vault.Gcp</RootNamespace>
+    <PackageId>Sigil.Vault.Gcp</PackageId>
+    <Description>Google Cloud KMS key provider for Sigil</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sigil.Core\Sigil.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Cloud.Kms.V1" />
+  </ItemGroup>
+
+</Project>
