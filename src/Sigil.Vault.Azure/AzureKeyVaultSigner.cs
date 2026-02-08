@@ -13,6 +13,8 @@ namespace Sigil.Vault.Azure;
 /// </summary>
 internal sealed class AzureKeyVaultSigner : VaultSignerBase
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private readonly CryptographyClient _cryptoClient;
     private readonly SignatureAlgorithm _azureAlgorithm;
     private readonly SigningAlgorithm _algorithm;
@@ -58,8 +60,11 @@ internal sealed class AzureKeyVaultSigner : VaultSignerBase
 
         try
         {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(DefaultTimeout);
+
             // Azure Key Vault's SignDataAsync handles hashing internally based on the algorithm
-            var result = await _cryptoClient.SignDataAsync(_azureAlgorithm, data, cancellationToken)
+            var result = await _cryptoClient.SignDataAsync(_azureAlgorithm, data, timeoutCts.Token)
                 .ConfigureAwait(false);
 
             return result.Signature;

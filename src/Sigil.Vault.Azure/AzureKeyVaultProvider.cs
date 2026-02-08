@@ -16,6 +16,8 @@ namespace Sigil.Vault.Azure;
 /// </summary>
 public sealed class AzureKeyVaultProvider : IKeyProvider
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private readonly Uri _vaultUri;
     private readonly DefaultAzureCredential _credential;
     private readonly KeyClient _keyClient;
@@ -74,19 +76,29 @@ public sealed class AzureKeyVaultProvider : IKeyProvider
 
         try
         {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(DefaultTimeout);
+
             // Get the key from the vault
             Response<KeyVaultKey> keyResponse;
 
-            if (Uri.TryCreate(keyReference, UriKind.Absolute, out var keyUri))
+            if (Uri.TryCreate(keyReference, UriKind.Absolute, out var keyUri)
+                && keyUri.Segments.Length >= 3
+                && keyUri.Segments[1].TrimEnd('/').Equals("keys", StringComparison.OrdinalIgnoreCase))
             {
-                // Full key identifier URL
-                keyResponse = await _keyClient.GetKeyAsync(keyUri.Segments[^1], cancellationToken: ct)
+                // Full key identifier URL: https://vault.vault.azure.net/keys/<name>[/<version>]
+                // Segments: ["/", "keys/", "<name>/", "<version>"]
+                var keyName = keyUri.Segments[2].TrimEnd('/');
+                var version = keyUri.Segments.Length >= 4
+                    ? keyUri.Segments[3].TrimEnd('/')
+                    : null;
+                keyResponse = await _keyClient.GetKeyAsync(keyName, version, cancellationToken: timeoutCts.Token)
                     .ConfigureAwait(false);
             }
             else
             {
                 // Key name only
-                keyResponse = await _keyClient.GetKeyAsync(keyReference, cancellationToken: ct)
+                keyResponse = await _keyClient.GetKeyAsync(keyReference, cancellationToken: timeoutCts.Token)
                     .ConfigureAwait(false);
             }
 

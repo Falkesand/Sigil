@@ -7,6 +7,8 @@ namespace Sigil.Vault.Gcp;
 
 internal sealed class GcpKmsSigner : VaultSignerBase
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private readonly KeyManagementServiceClient _client;
     private readonly CryptoKeyVersionName _keyVersionName;
 
@@ -37,10 +39,13 @@ internal sealed class GcpKmsSigner : VaultSignerBase
             _ => throw new NotSupportedException($"Algorithm {Algorithm} is not supported for GCP KMS signing")
         };
 
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(DefaultTimeout);
+
         var response = await _client.AsymmetricSignAsync(
             _keyVersionName,
             digest,
-            cancellationToken).ConfigureAwait(false);
+            timeoutCts.Token).ConfigureAwait(false);
 
         return response.Signature.ToByteArray();
     }

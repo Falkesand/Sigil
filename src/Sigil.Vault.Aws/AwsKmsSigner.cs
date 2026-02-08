@@ -6,6 +6,8 @@ namespace Sigil.Vault.Aws;
 
 internal sealed class AwsKmsSigner : VaultSignerBase
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private readonly IAmazonKeyManagementService _client;
     private readonly string _keyId;
     private readonly SigningAlgorithm _algorithm;
@@ -28,6 +30,9 @@ internal sealed class AwsKmsSigner : VaultSignerBase
 
     public override async ValueTask<byte[]> SignAsync(byte[] data, CancellationToken cancellationToken = default)
     {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(DefaultTimeout);
+
         using var messageStream = new MemoryStream(data);
         var request = new SignRequest
         {
@@ -37,7 +42,7 @@ internal sealed class AwsKmsSigner : VaultSignerBase
             SigningAlgorithm = AwsAlgorithmMap.ToAwsAlgorithm(_algorithm)
         };
 
-        var response = await _client.SignAsync(request, cancellationToken).ConfigureAwait(false);
+        var response = await _client.SignAsync(request, timeoutCts.Token).ConfigureAwait(false);
         return response.Signature.ToArray();
     }
 

@@ -6,6 +6,8 @@ namespace Sigil.Vault.Gcp;
 
 public sealed class GcpKmsKeyProvider : IKeyProvider
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private readonly KeyManagementServiceClient _client;
 
     private GcpKmsKeyProvider(KeyManagementServiceClient client)
@@ -46,7 +48,10 @@ public sealed class GcpKmsKeyProvider : IKeyProvider
         {
             var keyVersionName = CryptoKeyVersionName.Parse(keyReference);
 
-            var publicKeyResponse = await _client.GetPublicKeyAsync(keyVersionName, ct).ConfigureAwait(false);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(DefaultTimeout);
+
+            var publicKeyResponse = await _client.GetPublicKeyAsync(keyVersionName, timeoutCts.Token).ConfigureAwait(false);
 
             var algorithmResult = GcpAlgorithmMap.FromGcpAlgorithm(publicKeyResponse.Algorithm);
             if (!algorithmResult.IsSuccess)

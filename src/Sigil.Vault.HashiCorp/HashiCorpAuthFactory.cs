@@ -24,7 +24,13 @@ internal static class HashiCorpAuthFactory
         if (!authResult.IsSuccess)
             return VaultResult<IVaultClient>.Fail(authResult.ErrorKind, authResult.ErrorMessage);
 
-        var settings = new VaultClientSettings(vaultAddr, authResult.Value);
+        var settings = new VaultClientSettings(vaultAddr, authResult.Value)
+        {
+            MyHttpClientProviderFunc = handler => new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(30)
+            }
+        };
 
         var ns = Environment.GetEnvironmentVariable("VAULT_NAMESPACE");
         if (!string.IsNullOrWhiteSpace(ns))

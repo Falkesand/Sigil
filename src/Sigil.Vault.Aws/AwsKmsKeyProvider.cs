@@ -6,6 +6,8 @@ namespace Sigil.Vault.Aws;
 
 public sealed class AwsKmsKeyProvider : IKeyProvider
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private readonly IAmazonKeyManagementService _client;
     private bool _disposed;
 
@@ -45,12 +47,15 @@ public sealed class AwsKmsKeyProvider : IKeyProvider
 
         try
         {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(DefaultTimeout);
+
             var request = new GetPublicKeyRequest
             {
                 KeyId = keyReference
             };
 
-            var response = await _client.GetPublicKeyAsync(request, ct).ConfigureAwait(false);
+            var response = await _client.GetPublicKeyAsync(request, timeoutCts.Token).ConfigureAwait(false);
 
             var algorithm = AwsAlgorithmMap.FromAwsKeySpec(response.KeySpec);
             var publicKey = response.PublicKey.ToArray();
@@ -88,7 +93,8 @@ public sealed class AwsKmsKeyProvider : IKeyProvider
             return VaultResult<byte[]>.Fail(signerResult.ErrorKind, signerResult.ErrorMessage!);
         }
 
-        return VaultResult<byte[]>.Ok(signerResult.Value!.PublicKey);
+        using var signer = signerResult.Value;
+        return VaultResult<byte[]>.Ok(signer!.PublicKey);
     }
 
     public ValueTask DisposeAsync()
