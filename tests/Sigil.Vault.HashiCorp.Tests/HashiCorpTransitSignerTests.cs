@@ -194,4 +194,46 @@ public class HashiCorpTransitSignerTests
                 async () => await signer.SignAsync(null!, CancellationToken.None));
         }
     }
+
+    [Fact]
+    public void DecodeBase64Url_StandardBase64_DecodesCorrectly()
+    {
+        // "SGVsbG8=" is standard base64 for "Hello"
+        var result = HashiCorpTransitSigner.DecodeBase64Url("SGVsbG8");
+
+        Assert.Equal("Hello"u8.ToArray(), result);
+    }
+
+    [Fact]
+    public void DecodeBase64Url_UrlSafeChars_DecodesCorrectly()
+    {
+        // Standard base64 "a+b/c==" → base64url "a-b_c"
+        var expected = Convert.FromBase64String("a+b/cw==");
+
+        var result = HashiCorpTransitSigner.DecodeBase64Url("a-b_cw");
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void DecodeBase64Url_NoPadding_DecodesCorrectly()
+    {
+        // Standard base64 with padding "AQID" (no padding needed, length % 4 == 0)
+        var expected = new byte[] { 1, 2, 3 };
+
+        var result = HashiCorpTransitSigner.DecodeBase64Url("AQID");
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void DecodeBase64Url_VaultSignatureFormat_DecodesSuccessfully()
+    {
+        // Real vault JWS signature (base64url, no padding, contains - and _)
+        var vaultSig = "t2OianoUB_KRx5PvJ2Wv7M7LVNW9itoNmEcNtIFtjcs7IBFbslAUaVwSnAXHWH-i_PuE0DDx5ubKW6edtgabmg";
+
+        var result = HashiCorpTransitSigner.DecodeBase64Url(vaultSig);
+
+        Assert.Equal(64, result.Length); // P-256 P1363 signature: 32 bytes r + 32 bytes s
+    }
 }

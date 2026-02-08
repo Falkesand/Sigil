@@ -101,4 +101,46 @@ public class SignCommandTests : IDisposable
 
         Assert.Contains("passphrase", result.StdErr, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public async Task Sign_ExistingEnvelope_AppendsSignature()
+    {
+        var prefix1 = Path.Combine(_tempDir, "key1");
+        var prefix2 = Path.Combine(_tempDir, "key2");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix1);
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix2, "--algorithm", "ecdsa-p384");
+
+        var sigPath = Path.Combine(_tempDir, "multi.sig.json");
+
+        // First signature
+        await CommandTestHelper.InvokeAsync("sign", _artifactPath, "--key", prefix1 + ".pem", "--output", sigPath);
+
+        // Second signature — should append, not overwrite
+        await CommandTestHelper.InvokeAsync("sign", _artifactPath, "--key", prefix2 + ".pem", "--output", sigPath);
+
+        var json = File.ReadAllText(sigPath);
+        var envelope = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+        var signatures = envelope.GetProperty("signatures");
+
+        Assert.Equal(2, signatures.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Sign_ExistingEnvelope_BothSignaturesVerify()
+    {
+        var prefix1 = Path.Combine(_tempDir, "key-a");
+        var prefix2 = Path.Combine(_tempDir, "key-b");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix1);
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix2, "--algorithm", "ecdsa-p384");
+
+        var sigPath = Path.Combine(_tempDir, "multi-verify.sig.json");
+
+        await CommandTestHelper.InvokeAsync("sign", _artifactPath, "--key", prefix1 + ".pem", "--output", sigPath);
+        await CommandTestHelper.InvokeAsync("sign", _artifactPath, "--key", prefix2 + ".pem", "--output", sigPath);
+
+        var result = await CommandTestHelper.InvokeAsync("verify", _artifactPath, "--signature", sigPath);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("All signatures VERIFIED", result.StdOut);
+    }
 }
