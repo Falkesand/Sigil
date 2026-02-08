@@ -15,6 +15,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Sign with a vault key](#sign-with-a-vault-key)
   - [Sign with a hardware token](#sign-with-a-hardware-token)
   - [Add a timestamp](#add-a-timestamp)
+  - [Create an attestation](#create-an-attestation)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -39,6 +40,15 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Timestamp an existing signature](#timestamp-an-existing-signature)
   - [Timestamps and expired keys](#timestamps-and-expired-keys)
   - [How timestamping works](#how-timestamping-works)
+- [Attestations](#attestations)
+  - [The problem attestations solve](#the-problem-attestations-solve)
+  - [Create an attestation](#create-an-attestation-1)
+  - [Verify an attestation](#verify-an-attestation)
+  - [Predicate types](#predicate-types)
+  - [Multiple attestation signatures](#multiple-attestation-signatures)
+  - [Attestations with trust bundles](#attestations-with-trust-bundles)
+  - [How attestations work](#how-attestations-work)
+  - [Attestation envelope format](#attestation-envelope-format)
 - [Discovery](#discovery)
   - [Well-known URLs](#well-known-urls)
   - [DNS TXT records](#dns-txt-records)
@@ -60,6 +70,8 @@ Sigil lets you **sign files** and **verify signatures**. That's it.
 
 It works with any file: binaries, SBOMs, container images, config files, tarballs — anything. When signing a CycloneDX or SPDX JSON file, Sigil automatically detects the format and embeds SBOM metadata in the signature envelope.
 
+Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) statements wrapped in [DSSE](https://github.com/secure-systems-lab/dsse) envelopes that prove how an artifact was built (CI system, inputs, steps). These follow the [SLSA](https://slsa.dev/) provenance standard.
+
 ## Why not just use Sigstore/PGP/X.509?
 
 | | Sigil | Sigstore | PGP | X.509 |
@@ -73,6 +85,7 @@ It works with any file: binaries, SBOMs, container images, config files, tarball
 | Vault/KMS support | Yes (4 cloud + PKCS#11) | PKCS#11 | No | Partial |
 | Works offline | Yes | No | Yes | Partial |
 | Hidden state on disk | None | None | `~/.gnupg/` | Varies |
+| SLSA attestations | Yes (DSSE/in-toto) | Yes | No | No |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
 Sigil is for people who want to sign things **without asking permission from a cloud service**.
@@ -248,6 +261,40 @@ sigil timestamp release.tar.gz.sig.json --tsa http://timestamp.digicert.com
 ```
 
 This provides cryptographic proof of when the signature was created — useful when signing keys have expiry dates. See [Timestamping](#timestamping) for details.
+
+### Create an attestation
+
+Attestations prove **how** an artifact was built — not just that it hasn't been tampered with. They wrap an [in-toto](https://in-toto.io/) statement in a [DSSE](https://github.com/secure-systems-lab/dsse) envelope, signed with the same key infrastructure as regular signatures.
+
+```
+sigil attest release.tar.gz --predicate provenance.json --type slsa-provenance-v1
+```
+
+```
+Attested: release.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:9c8b0e1d...
+Mode: ephemeral (key not persisted)
+Attestation: release.tar.gz.att.json
+```
+
+Verify the attestation:
+
+```
+sigil verify-attestation release.tar.gz
+```
+
+```
+Artifact: release.tar.gz
+Digests: MATCH
+Predicate Type: https://slsa.dev/provenance/v1
+Subjects: 1
+  [VERIFIED] sha256:9c8b0e1d...
+
+All signatures VERIFIED.
+```
+
+See [Attestations](#attestations) for details.
 
 ## Ephemeral vs persistent vs vault
 
@@ -643,6 +690,235 @@ The timestamp token is self-contained — anyone can verify it without contactin
 | Sectigo | `http://timestamp.sectigo.com` |
 | GlobalSign | `http://timestamp.globalsign.com/tsa/r6advanced1` |
 
+## Attestations
+
+Signatures prove a file hasn't been tampered with. Attestations go further — they prove **how** and **where** the file was built. An attestation bundles a signed [in-toto Statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) (subject + predicate) inside a [DSSE envelope](https://github.com/secure-systems-lab/dsse) (Dead Simple Signing Envelope), using the same key infrastructure as regular Sigil signatures.
+
+Attestation files use the `.att.json` extension (distinct from `.sig.json` for regular signatures).
+
+### The problem attestations solve
+
+A regular signature answers:
+
+> "Has this file been modified since it was signed?"
+
+An attestation answers:
+
+> "What system built this file, from what inputs, using what process?"
+
+This is critical for supply chain security. A signature tells you a file is intact. An attestation tells you it was built by GitHub Actions from a specific commit on a specific branch — not by someone's laptop.
+
+### Create an attestation
+
+First, create a predicate JSON file describing how the artifact was built:
+
+```json
+{
+  "builder": { "id": "https://github.com/actions/runner" },
+  "buildType": "https://slsa.dev/build/v1",
+  "invocation": {
+    "configSource": {
+      "uri": "git+https://github.com/org/repo@refs/heads/main",
+      "digest": { "sha1": "abc123..." }
+    }
+  }
+}
+```
+
+Then create the attestation:
+
+```
+sigil attest release.tar.gz --predicate provenance.json --type slsa-provenance-v1
+```
+
+```
+Attested: release.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:9c8b0e1d...
+Mode: ephemeral (key not persisted)
+Attestation: release.tar.gz.att.json
+```
+
+Sign with a persistent key:
+
+```
+sigil attest release.tar.gz --predicate provenance.json --type slsa-provenance-v1 --key mykey.pem
+```
+
+Sign with a vault key:
+
+```
+sigil attest release.tar.gz --predicate provenance.json --type slsa-provenance-v1 --vault aws --vault-key alias/ci-key
+```
+
+Add an RFC 3161 timestamp:
+
+```
+sigil attest release.tar.gz --predicate provenance.json --type slsa-provenance-v1 --key mykey.pem --timestamp http://timestamp.digicert.com
+```
+
+### Verify an attestation
+
+```
+sigil verify-attestation release.tar.gz
+```
+
+```
+Artifact: release.tar.gz
+Digests: MATCH
+Predicate Type: https://slsa.dev/provenance/v1
+Subjects: 1
+  [VERIFIED] sha256:c017446b...
+
+All signatures VERIFIED.
+```
+
+If the artifact has been tampered with:
+
+```
+FAILED: Subject digest mismatch — artifact has been modified.
+```
+
+Filter by predicate type — reject attestations that don't match the expected type:
+
+```
+sigil verify-attestation release.tar.gz --type slsa-provenance-v1
+```
+
+If the attestation has a different predicate type:
+
+```
+Predicate type mismatch: expected 'https://slsa.dev/provenance/v1', got 'https://cyclonedx.org/bom'.
+```
+
+### Predicate types
+
+Sigil supports short names for common predicate types, plus any valid URI:
+
+| Short name | URI |
+|-----------|-----|
+| `slsa-provenance-v1` | `https://slsa.dev/provenance/v1` |
+| `spdx-json` | `https://spdx.dev/Document` |
+| `cyclonedx` | `https://cyclonedx.org/bom` |
+| Any valid URI | Passed through as-is |
+
+Sigil does not validate predicate content — it guarantees integrity and authenticity. Consumers validate the predicate structure against their own schemas.
+
+### Multiple attestation signatures
+
+Multiple parties can sign the same attestation, just like regular signatures:
+
+```
+sigil attest release.tar.gz --predicate provenance.json --type slsa-provenance-v1 --key build-key.pem --output release.att.json
+sigil attest release.tar.gz --predicate provenance.json --type slsa-provenance-v1 --key audit-key.pem --output release.att.json
+```
+
+The second command appends a signature to the existing `.att.json` rather than overwriting it. Verification shows all signatures:
+
+```
+sigil verify-attestation release.tar.gz --attestation release.att.json
+```
+
+```
+Artifact: release.tar.gz
+Digests: MATCH
+Predicate Type: https://slsa.dev/provenance/v1
+Subjects: 1
+  [VERIFIED] sha256:a1b2c3...
+  [VERIFIED] sha256:d4e5f6...
+
+All signatures VERIFIED.
+```
+
+### Attestations with trust bundles
+
+Attestation verification supports the same trust bundle integration as regular signatures. Use `--trust-bundle` or `--discover` to evaluate whether the attestation signer is trusted:
+
+```
+sigil verify-attestation release.tar.gz --trust-bundle trust-signed.json --authority sha256:def456...
+```
+
+```
+Artifact: release.tar.gz
+Digests: MATCH
+Predicate Type: https://slsa.dev/provenance/v1
+Subjects: 1
+  [TRUSTED] sha256:c017446b... (CI Pipeline Key)
+           Key is directly trusted.
+
+All signatures TRUSTED.
+```
+
+Or with discovery:
+
+```
+sigil verify-attestation release.tar.gz --discover example.com
+```
+
+### How attestations work
+
+**DSSE (Dead Simple Signing Envelope).** Attestations use DSSE instead of Sigil's custom envelope format. DSSE is the standard envelope for in-toto attestations. The key difference: DSSE uses Pre-Authentication Encoding (PAE) for the signing payload instead of JCS canonicalization.
+
+**PAE (Pre-Authentication Encoding).** What gets signed is:
+
+```
+"DSSEv1" + SP + len(type) + SP + type + SP + len(body) + SP + body
+```
+
+Where `type` is `"application/vnd.in-toto+json"` and `body` is the JSON-serialized in-toto statement. PAE is deterministic by construction — no canonicalization needed.
+
+**in-toto Statement.** The statement contains:
+- `_type`: always `"https://in-toto.io/Statement/v1"`
+- `subject`: list of artifact names + digest maps
+- `predicateType`: URI identifying the predicate schema
+- `predicate`: arbitrary JSON (build provenance, SBOM link, vulnerability report, etc.)
+
+**Self-contained verification.** Like regular signatures, DSSE attestation signatures embed the public key and key fingerprint. No external key import is needed for verification.
+
+**Trust adapter.** Attestation verification results are automatically mapped to the same `VerificationResult` type used by the trust evaluator, so trust bundles, scopes, endorsements, and timestamp-based expiry overrides all work identically.
+
+### Attestation envelope format
+
+The `.att.json` file follows the DSSE specification with Sigil extensions:
+
+```json
+{
+  "payloadType": "application/vnd.in-toto+json",
+  "payload": "base64-encoded-statement...",
+  "signatures": [
+    {
+      "keyid": "sha256:abc123...",
+      "sig": "base64...",
+      "algorithm": "ecdsa-p256",
+      "publicKey": "base64-SPKI...",
+      "timestamp": "2026-02-09T12:00:00Z",
+      "timestampToken": "base64-DER..."
+    }
+  ]
+}
+```
+
+The `payload` decodes to an in-toto statement:
+
+```json
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "release.tar.gz",
+      "digest": { "sha256": "abc123..." }
+    }
+  ],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "builder": { "id": "https://github.com/actions/runner" },
+    "buildType": "https://slsa.dev/build/v1"
+  }
+}
+```
+
+The `algorithm`, `publicKey`, `timestamp`, and `timestampToken` fields are Sigil extensions to the DSSE signature format, providing self-contained verification and timestamping support.
+
 ## Discovery
 
 Trust bundles are useful, but you still need to distribute them — copy files, share paths, configure CI. Discovery automates this. Organizations publish trust bundles at standard locations, and Sigil fetches them automatically.
@@ -962,6 +1238,8 @@ sigil trust sign trust.json --vault pkcs11 --vault-key "pkcs11:token=YubiKey;obj
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
 sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri]
+sigil attest <file> --predicate <json> --type <type> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
+sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri]
 sigil timestamp <envelope> --tsa <tsa-url> [--index <n>]
 sigil trust create --name <name> [-o path] [--description "text"]
 sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
@@ -988,6 +1266,21 @@ sigil discover git <url> [-o path]
 - `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
 - `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (non-fatal on failure)
 - SBOM format is auto-detected for CycloneDX and SPDX JSON files
+
+**attest**: Create a DSSE attestation for a file. Three signing modes (same as `sign`):
+- Without `--key` or `--vault`: ephemeral mode
+- With `--key`: persistent mode
+- With `--vault` and `--vault-key`: vault mode
+- `--predicate` and `--type` are required
+- `--type` accepts short names (`slsa-provenance-v1`, `spdx-json`, `cyclonedx`) or any valid URI
+- `--timestamp` requests an RFC 3161 timestamp (non-fatal on failure)
+- If `--output` points to an existing `.att.json`, the new signature is appended
+
+**verify-attestation**: Verify a DSSE attestation for a file.
+- Public key is extracted from the `.att.json` — no key import needed
+- Default attestation path is `<file>.att.json`; override with `--attestation`
+- `--type` filters by predicate type — rejects attestations with a different type
+- `--trust-bundle` and `--discover` enable trust evaluation (same as `verify`)
 
 **timestamp**: Apply RFC 3161 timestamp tokens to an existing signature envelope.
 - `--tsa` is required — the URL of the Timestamp Authority
@@ -1103,6 +1396,14 @@ dotnet sigil trust sign trust.json --key authority.pem -o trust-signed.json
 dotnet sigil verify release.tar.gz --trust-bundle trust-signed.json --authority sha256:def456...
 ```
 
+**Attestations:**
+
+```
+dotnet sigil attest release.tar.gz --predicate provenance.json --type slsa-provenance-v1 --key mykey.pem
+dotnet sigil verify-attestation release.tar.gz
+dotnet sigil verify-attestation release.tar.gz --type slsa-provenance-v1 --trust-bundle trust-signed.json --authority sha256:def456...
+```
+
 **Discovery:**
 
 ```
@@ -1123,12 +1424,15 @@ A typical GitHub Actions workflow using the local tool:
 
 - run: dotnet sigil sign my-app.tar.gz --key ${{ runner.temp }}/signing-key.pem --label "ci-pipeline"
 
+- run: dotnet sigil attest my-app.tar.gz --predicate provenance.json --type slsa-provenance-v1 --key ${{ runner.temp }}/signing-key.pem
+
 - run: dotnet sigil verify my-app.tar.gz
+
+- run: dotnet sigil verify-attestation my-app.tar.gz --type slsa-provenance-v1
 ```
 
 ## What's coming
 
-- **Attestations (SLSA/in-toto)** — Signed build provenance statements following the in-toto attestation format.
 - **Policy engine** — Declarative verification rules (min signatures, required timestamps, algorithm restrictions).
 - **Transparency log** — Append-only Merkle tree log for auditable signing events.
 - **Git commit signing** — Drop-in replacement for GPG via `gpg.program` / `gpg.format`.
