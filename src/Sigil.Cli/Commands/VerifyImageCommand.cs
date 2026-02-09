@@ -217,25 +217,7 @@ public static class VerifyImageCommand
             return null;
         }
 
-        if (authority is null)
-        {
-            Console.Error.WriteLine("--authority is required when using --trust-bundle.");
-            return null;
-        }
-
         var bundleJson = File.ReadAllText(path);
-        var verifyResult = BundleSigner.Verify(bundleJson, authority);
-        if (!verifyResult.IsSuccess)
-        {
-            Console.Error.WriteLine($"Trust bundle verification failed: {verifyResult.ErrorMessage}");
-            return null;
-        }
-
-        if (!verifyResult.Value)
-        {
-            Console.Error.WriteLine("Trust bundle signature is invalid.");
-            return null;
-        }
 
         var deserializeResult = BundleSigner.Deserialize(bundleJson);
         if (!deserializeResult.IsSuccess)
@@ -244,7 +226,30 @@ public static class VerifyImageCommand
             return null;
         }
 
-        return deserializeResult.Value;
+        var bundle = deserializeResult.Value;
+
+        if (authority is not null)
+        {
+            var verifyResult = BundleSigner.Verify(bundleJson, authority);
+            if (!verifyResult.IsSuccess)
+            {
+                Console.Error.WriteLine($"Trust bundle verification failed: {verifyResult.ErrorMessage}");
+                return null;
+            }
+
+            if (!verifyResult.Value)
+            {
+                Console.Error.WriteLine("Trust bundle signature is invalid.");
+                return null;
+            }
+        }
+        else if (bundle.Signature is not null)
+        {
+            Console.Error.WriteLine("--authority is required when using --trust-bundle with a signed bundle.");
+            return null;
+        }
+
+        return bundle;
     }
 
     private static void EvaluatePolicy(
