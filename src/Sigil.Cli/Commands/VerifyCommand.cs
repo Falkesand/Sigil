@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Sigil.Discovery;
+using Sigil.Policy;
 using Sigil.Signing;
 using Sigil.Trust;
 
@@ -14,6 +15,7 @@ public static class VerifyCommand
         var trustBundleOption = new Option<string?>("--trust-bundle") { Description = "Path to a signed trust bundle for trust evaluation" };
         var authorityOption = new Option<string?>("--authority") { Description = "Expected authority fingerprint for the trust bundle" };
         var discoverOption = new Option<string?>("--discover") { Description = "Discover trust bundle from URI (well-known URL, dns:domain, or git:url)" };
+        var policyOption = new Option<string?>("--policy") { Description = "Path to a policy file for rule-based verification" };
 
         var cmd = new Command("verify", "Verify the signature of an artifact");
         cmd.Add(artifactArg);
@@ -21,6 +23,7 @@ public static class VerifyCommand
         cmd.Add(trustBundleOption);
         cmd.Add(authorityOption);
         cmd.Add(discoverOption);
+        cmd.Add(policyOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -29,8 +32,15 @@ public static class VerifyCommand
             var trustBundlePath = parseResult.GetValue(trustBundleOption);
             var authority = parseResult.GetValue(authorityOption);
             var discoverUri = parseResult.GetValue(discoverOption);
+            var policyPath = parseResult.GetValue(policyOption);
 
             // Mutual exclusion check
+            if (policyPath is not null && (trustBundlePath is not null || discoverUri is not null))
+            {
+                Console.Error.WriteLine("--policy is mutually exclusive with --trust-bundle and --discover.");
+                return;
+            }
+
             if (trustBundlePath is not null && discoverUri is not null)
             {
                 Console.Error.WriteLine("--trust-bundle and --discover are mutually exclusive.");
@@ -79,6 +89,13 @@ public static class VerifyCommand
                     Console.WriteLine($"Supplier: {supplier}");
                 if (metadata.TryGetValue("sbom.componentCount", out var compCount))
                     Console.WriteLine($"Components: {compCount}");
+            }
+
+            // Policy evaluation
+            if (policyPath is not null)
+            {
+                EvaluatePolicy(policyPath, result, envelope, artifact.Name);
+                return;
             }
 
             // Discovery-based trust evaluation
@@ -262,5 +279,50 @@ public static class VerifyCommand
         }
 
         return TrustEvaluator.Evaluate(verification, deserializeResult.Value, artifactName);
+    }
+
+    private static void EvaluatePolicy(
+        string policyPath,
+        VerificationResult result,
+        SignatureEnvelope envelope,
+        string? artifactName)
+    {
+        if (!File.Exists(policyPath))
+        {
+            Console.Error.WriteLine($"Policy file not found: {policyPath}");
+            return;
+        }
+
+        var json = File.ReadAllText(policyPath);
+        var loadResult = PolicyLoader.Load(json);
+        if (!loadResult.IsSuccess)
+        {
+            Console.Error.WriteLine($"Invalid policy: {loadResult.ErrorMessage}");
+            return;
+        }
+
+        var context = new PolicyContext
+        {
+            Verification = result,
+            Envelope = envelope,
+            ArtifactName = artifactName,
+            BasePath = Path.GetDirectoryName(Path.GetFullPath(policyPath))
+        };
+
+        var evalResult = PolicyEvaluator.Evaluate(loadResult.Value, context);
+
+        Console.WriteLine("\nPolicy Evaluation:");
+        foreach (var ruleResult in evalResult.Results)
+        {
+            var status = ruleResult.Passed ? "PASS" : "FAIL";
+            Console.WriteLine($"  [{status}] {ruleResult.RuleName}");
+            if (ruleResult.Reason is not null)
+                Console.WriteLine($"         {ruleResult.Reason}");
+        }
+
+        if (evalResult.AllPassed)
+            Console.WriteLine("\nAll policy rules PASSED.");
+        else
+            Console.WriteLine("\nPolicy evaluation FAILED.");
     }
 }
