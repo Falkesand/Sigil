@@ -90,6 +90,9 @@ public static class SignCommand
                 using var signer = signerResult.Value;
                 var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
 
+                if (string.Equals(vaultName, "pkcs11", StringComparison.OrdinalIgnoreCase))
+                    Console.Error.WriteLine("Waiting for PKCS#11 device (touch may be required)...");
+
                 var outputPath = output ?? artifact.FullName + ".sig.json";
                 var envelope = await LoadOrCreateEnvelopeAsync(artifact, outputPath, signer, fingerprint, label);
 
