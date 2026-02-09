@@ -28,6 +28,8 @@ rootCommand.Add(AttestCommand.Create());
 rootCommand.Add(VerifyAttestationCommand.Create());
 rootCommand.Add(LogCommand.Create());
 rootCommand.Add(GitCommand.Create());
+rootCommand.Add(SignImageCommand.Create());
+rootCommand.Add(VerifyImageCommand.Create());
 
 var config = new CommandLineConfiguration(rootCommand);
 return await config.InvokeAsync(args);

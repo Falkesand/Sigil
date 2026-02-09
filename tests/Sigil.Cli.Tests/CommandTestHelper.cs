@@ -45,6 +45,8 @@ public static class CommandTestHelper
             rootCommand.Add(VerifyAttestationCommand.Create());
             rootCommand.Add(LogCommand.Create());
             rootCommand.Add(GitCommand.Create());
+            rootCommand.Add(SignImageCommand.Create());
+            rootCommand.Add(VerifyImageCommand.Create());
 
             Environment.ExitCode = 0;
             var config = new CommandLineConfiguration(rootCommand);

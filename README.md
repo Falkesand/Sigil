@@ -19,6 +19,8 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Verify with a policy](#verify-with-a-policy)
   - [Log a signing event](#log-a-signing-event)
   - [Sign git commits](#sign-git-commits)
+  - [Sign a container image](#sign-a-container-image)
+  - [Verify a container image](#verify-a-container-image)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -82,6 +84,12 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Verify commits](#verify-commits)
   - [Wrapper script reference](#wrapper-script-reference)
   - [How git signing works](#how-git-signing-works)
+- [Container/OCI image signing](#containeroci-image-signing)
+  - [Sign a container image](#sign-a-container-image-1)
+  - [Verify a container image](#verify-a-container-image-1)
+  - [Registry authentication](#registry-authentication)
+  - [How container signing works](#how-container-signing-works)
+  - [Signature storage format](#signature-storage-format)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -104,7 +112,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 
 | | Sigil | Sigstore | PGP | X.509 |
 |---|---|---|---|---|
-| Needs an account | No | Yes (OIDC) | No | Yes (CA) |
+| Needs an account | No (keyless/OIDC planned) | Yes (OIDC) | No | Yes (CA) |
 | Trusted timestamping | Yes (RFC 3161) | Yes (Rekor) | No | Yes (RFC 3161) |
 | Needs internet | No | Yes | No | Depends |
 | Stores your email | No | Yes (public log) | Optional | Yes |
@@ -115,6 +123,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 | Hidden state on disk | None | None | `~/.gnupg/` | Varies |
 | SLSA attestations | Yes (DSSE/in-toto) | Yes | No | No |
 | Git commit signing | Yes (GPG drop-in) | No | Yes | No |
+| Container signing | Yes (OCI 1.1 referrers) | Yes (Cosign) | No | No |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
 Sigil is for people who want to sign things **without asking permission from a cloud service**.
@@ -405,6 +414,45 @@ git commit -m "Signed with vault key"
 ```
 
 See [Git commit signing](#git-commit-signing) for details.
+
+### Sign a container image
+
+Sign an OCI container image directly in the registry — no need to pull it first:
+
+```
+sigil sign-image ghcr.io/myorg/myapp:v1.0 --key mykey.pem
+```
+
+```
+Signed: ghcr.io/myorg/myapp:v1.0
+Digest: sha256:a1b2c3d4...
+Algorithm: ecdsa-p256
+Key: sha256:c017446b...
+Mode: persistent key
+Signature: sha256:e5f6a7b8...
+```
+
+The signature is stored as an OCI artifact in the same registry, discoverable via the OCI 1.1 referrers API. See [Container/OCI image signing](#containeroci-image-signing) for details.
+
+### Verify a container image
+
+```
+sigil verify-image ghcr.io/myorg/myapp:v1.0
+```
+
+```
+Image: ghcr.io/myorg/myapp:v1.0
+Digest: sha256:a1b2c3d4...
+Signatures: 1
+
+  [VERIFIED] Signature #1
+    Key: sha256:c01744...
+    Algorithm: ecdsa-p256
+
+All signatures VERIFIED.
+```
+
+Trust bundles, policies, and discovery all work with container images — same as file signatures. See [Container/OCI image signing](#containeroci-image-signing) for details.
 
 ## Ephemeral vs persistent vs vault
 
@@ -1918,6 +1966,164 @@ Inside the armor is a standard Sigil envelope — the same format used for file 
 
 **Self-contained verification.** Like all Sigil signatures, the public key is embedded in the envelope. Verification uses the existing `SignatureValidator` — no separate key import or key server lookup needed.
 
+## Container/OCI image signing
+
+Sigil signs OCI container images directly in the registry. Signatures are stored as OCI 1.1 artifacts using the referrers API, making them discoverable by any compliant registry. Unlike Cosign, Sigil requires no cloud infrastructure — offline verification works with the same self-contained envelopes used for file signing.
+
+Zero new dependencies — BCL `HttpClient` + `System.Text.Json` only.
+
+### Sign a container image
+
+Sign an image in any OCI 1.1-compatible registry:
+
+```
+sigil sign-image ghcr.io/myorg/myapp:v1.0 --key mykey.pem
+```
+
+```
+Signed: ghcr.io/myorg/myapp:v1.0
+Digest: sha256:a1b2c3d4...
+Algorithm: ecdsa-p256
+Key: sha256:c017446b...
+Mode: persistent key
+Signature: sha256:e5f6a7b8...
+```
+
+All signing modes work — ephemeral, persistent, vault, and PKCS#11:
+
+```
+sigil sign-image registry.example.com/app:latest
+sigil sign-image registry.example.com/app:latest --key mykey.pem
+sigil sign-image registry.example.com/app:latest --vault aws --vault-key alias/ci-key
+sigil sign-image registry.example.com/app:latest --vault pkcs11 --vault-key "pkcs11:token=YubiKey;object=my-key"
+```
+
+Add a label and timestamp:
+
+```
+sigil sign-image ghcr.io/myorg/myapp:v1.0 --key mykey.pem --label "ci-build" --timestamp http://timestamp.digicert.com
+```
+
+Each `sign-image` invocation creates a separate OCI artifact. Multiple parties can sign the same image independently — all signatures are discoverable via referrers.
+
+**Multi-arch images:** `sign-image` signs whatever the tag resolves to — whether that's a single manifest or a manifest list (OCI image index). This matches Cosign's behavior.
+
+### Verify a container image
+
+```
+sigil verify-image ghcr.io/myorg/myapp:v1.0
+```
+
+```
+Image: ghcr.io/myorg/myapp:v1.0
+Digest: sha256:a1b2c3d4...
+Signatures: 2
+
+  [VERIFIED] Signature #1
+    Key: sha256:c01744...
+    Algorithm: ecdsa-p256
+    Label: ci-build
+    Timestamp: 2026-02-09T14:30:00Z
+  [VERIFIED] Signature #2
+    Key: sha256:7f2a3b...
+    Algorithm: ecdsa-p384
+
+All signatures VERIFIED.
+```
+
+Trust bundles, policies, and discovery all work:
+
+```
+sigil verify-image ghcr.io/myorg/myapp:v1.0 --trust-bundle trust-signed.json --authority sha256:def456...
+sigil verify-image ghcr.io/myorg/myapp:v1.0 --discover example.com
+sigil verify-image ghcr.io/myorg/myapp:v1.0 --policy policy.json
+```
+
+### Registry authentication
+
+Sigil resolves registry credentials automatically, in this order:
+
+1. **Environment variables** — `SIGIL_REGISTRY_USERNAME` and `SIGIL_REGISTRY_PASSWORD`
+2. **Docker credential helpers** — per-registry helpers from `~/.docker/config.json` `credHelpers`
+3. **Docker credential store** — default helper from `~/.docker/config.json` `credsStore`
+4. **Docker config auths** — base64-encoded credentials from `~/.docker/config.json` `auths`
+5. **Anonymous** — no authentication
+
+If you're already authenticated with `docker login`, Sigil uses those credentials automatically. For CI/CD, set the environment variables:
+
+```bash
+# Linux / macOS
+export SIGIL_REGISTRY_USERNAME=myuser
+export SIGIL_REGISTRY_PASSWORD=mytoken
+
+# Windows (PowerShell)
+$env:SIGIL_REGISTRY_USERNAME = "myuser"
+$env:SIGIL_REGISTRY_PASSWORD = "mytoken"
+```
+
+**Token auth** is handled transparently. When a registry returns a 401 with a `Www-Authenticate: Bearer` challenge, Sigil requests a token from the auth endpoint and caches it for subsequent requests.
+
+### How container signing works
+
+**Sign flow:**
+
+1. Parse the image reference (e.g., `ghcr.io/myorg/myapp:v1.0`)
+2. `HEAD /v2/<repo>/manifests/<tag>` — get the manifest digest, size, and media type
+3. `GET /v2/<repo>/manifests/<digest>` — fetch the manifest bytes (the artifact being signed)
+4. Build a `SubjectDescriptor` with `name=<full image ref>`, `digests=SHA-256+SHA-512(manifest bytes)`, `mediaType=<manifest media type>`
+5. Build the signing payload (same as file signing: JCS subject + SHA-256 digest + JCS signed attributes)
+6. Sign with the signer (ephemeral, PEM, vault, or PKCS#11)
+7. Optionally apply RFC 3161 timestamp
+8. Upload the signature envelope as a blob (`POST` + `PUT /v2/<repo>/blobs/uploads/`)
+9. Push a signature manifest with `subject` pointing to the signed image (`PUT /v2/<repo>/manifests/<digest>`)
+
+**Verify flow:**
+
+1. Parse the image reference
+2. `HEAD /v2/<repo>/manifests/<tag>` — get the manifest digest
+3. `GET /v2/<repo>/referrers/<digest>?artifactType=application/vnd.sigil.signature.v1+json` — find Sigil signatures
+4. For each signature artifact: fetch the manifest, fetch the layer blob, deserialize the `SignatureEnvelope`
+5. `GET /v2/<repo>/manifests/<digest>` — fetch the signed manifest bytes
+6. Verify each signature against the manifest bytes (same as file verification)
+7. Optionally evaluate trust bundles, policies, or discovery
+
+**HTTPS enforcement:** All registry communication uses HTTPS, except for `localhost`, `127.0.0.1`, and `::1` (which use HTTP for local development registries).
+
+### Signature storage format
+
+Signatures are stored as OCI artifact manifests per the OCI 1.1 spec:
+
+```json
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "artifactType": "application/vnd.sigil.signature.v1+json",
+  "config": {
+    "mediaType": "application/vnd.oci.empty.v1+json",
+    "digest": "sha256:44136fa355b311bfa706c3dba8b08a9b3bb45c4c5d86a99e340f0a2b9df3ac36",
+    "size": 2
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.sigil.signature.v1+json",
+      "digest": "sha256:<envelope-digest>",
+      "size": 1234
+    }
+  ],
+  "subject": {
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "digest": "sha256:<image-manifest-digest>",
+    "size": 5678
+  }
+}
+```
+
+The `subject` field links the signature to the signed image. Registries index this relationship via the referrers API, making signatures discoverable. The `layers[0]` blob contains a standard Sigil `SignatureEnvelope` — the same format used for file signatures.
+
+The `config` is the OCI empty descriptor (`{}`, 2 bytes) — required by the spec but unused for signature artifacts.
+
+**Compatible registries:** Any OCI 1.1-compliant registry that supports the referrers API. This includes GitHub Container Registry (ghcr.io), Docker Hub, Azure Container Registry, Amazon ECR, Google Artifact Registry, and Harbor 2.6+.
+
 ## CLI reference
 
 ```
@@ -1941,6 +2147,8 @@ sigil log proof [--log <path>] [--index <n>] [--old-size <m>]
 sigil discover well-known <domain> [-o path]
 sigil discover dns <domain> [-o path]
 sigil discover git <url> [-o path]
+sigil sign-image <image> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--passphrase "pass"] [--algorithm name] [--label "name"] [--timestamp <tsa-url>]
+sigil verify-image <image> [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil git config --key <private.pem> | --vault <provider> --vault-key <reference> [--global] [--passphrase "pass"]
 ```
 
@@ -2036,6 +2244,22 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 - Without `--global`, config is local (per-repository) and commits must be signed with `-S`
 - Generates a wrapper script in `~/.sigil/` and sets `gpg.format`, `gpg.x509.program`, and `user.signingkey`
 - `--passphrase` embeds the passphrase in the wrapper script (consider `SIGIL_PASSPHRASE` env var instead)
+
+**sign-image**: Sign an OCI container image in a registry.
+- `<image>` is a full image reference (e.g., `ghcr.io/myorg/myapp:v1.0` or `registry/repo@sha256:...`)
+- Three signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`)
+- `--vault` and `--key` are mutually exclusive
+- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
+- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
+- `--label` attaches a label to the signature
+- Registry authentication is resolved automatically (see [Registry authentication](#registry-authentication))
+
+**verify-image**: Verify signatures on an OCI container image.
+- `<image>` is a full image reference
+- Discovers Sigil signature artifacts via the OCI 1.1 referrers API
+- `--trust-bundle` and `--authority` enable trust evaluation
+- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
+- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
 
 ## Dotnet tool reference
 
@@ -2144,6 +2368,14 @@ dotnet sigil discover well-known example.com -o trust.json
 dotnet sigil verify release.tar.gz --discover example.com
 ```
 
+**Container signing:**
+
+```
+dotnet sigil sign-image ghcr.io/myorg/myapp:v1.0 --key mykey.pem
+dotnet sigil verify-image ghcr.io/myorg/myapp:v1.0
+dotnet sigil verify-image ghcr.io/myorg/myapp:v1.0 --policy policy.json
+```
+
 **Git signing:**
 
 ```
@@ -2168,13 +2400,22 @@ A typical GitHub Actions workflow using the local tool:
 - run: dotnet sigil verify my-app.tar.gz --policy policy.json
 
 - run: dotnet sigil verify-attestation my-app.tar.gz --type slsa-provenance-v1 --policy policy.json
+
+- run: dotnet sigil sign-image ghcr.io/myorg/myapp:${{ github.sha }} --key ${{ runner.temp }}/signing-key.pem --label "ci-pipeline"
+
+- run: dotnet sigil verify-image ghcr.io/myorg/myapp:${{ github.sha }} --policy policy.json
 ```
 
 ## What's coming
 
-- **Container/OCI signing** — Sign container images in OCI registries using the referrers API.
 - **Signature revocation** — Revoke individual signatures or keys without re-signing the trust bundle.
 - **Batch/manifest signing** — Sign multiple files in one operation with a single envelope.
+- **P-521 support** — ECDSA P-521 curve (same `ECDsa` code path as P-256/P-384).
+- **Keyless/OIDC signing** — Authenticate with OIDC (GitHub Actions, Google, Microsoft), get a short-lived certificate, sign without key management. Sigstore-compatible workflow without cloud dependency.
+- **Remote transparency log** — HTTP API for shared/public signing audit logs beyond the local Merkle tree.
+- **Native AOT / self-contained binaries** — Single-binary distribution without requiring the .NET SDK.
+- **Archive/recursive signing** — Sign individual entries inside ZIP, tar.gz, and NuGet packages with an embedded manifest.
+- **Authenticode integration** — Embed Authenticode signatures in PE binaries for Windows OS-level trust recognition.
 - **Ed25519** — When the .NET SDK ships the native API.
 
 ## Install
