@@ -7,5 +7,6 @@ public enum TrustDecision
     Untrusted,
     Expired,
     ScopeMismatch,
-    BundleInvalid
+    BundleInvalid,
+    Revoked
 }
