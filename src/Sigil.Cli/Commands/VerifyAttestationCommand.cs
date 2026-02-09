@@ -153,6 +153,7 @@ public static class VerifyAttestationCommand
                             TrustDecision.TrustedViaEndorsement => "TRUSTED",
                             TrustDecision.Expired => "EXPIRED",
                             TrustDecision.ScopeMismatch => "SCOPE_MISMATCH",
+                            TrustDecision.Revoked => "REVOKED",
                             _ => "UNTRUSTED"
                         };
 

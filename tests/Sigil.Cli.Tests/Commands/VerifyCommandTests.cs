@@ -2,6 +2,12 @@ namespace Sigil.Cli.Tests.Commands;
 
 public class VerifyCommandTests : IDisposable
 {
+    private static readonly System.Text.Json.JsonSerializerOptions s_jsonOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
     private readonly string _tempDir;
     private readonly string _artifactPath;
 
@@ -72,16 +78,52 @@ public class VerifyCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Verify_trust_bundle_requires_authority()
+    public async Task Verify_trust_bundle_requires_authority_for_signed_bundle()
     {
         await CommandTestHelper.InvokeAsync("sign", _artifactPath);
         var dummyBundle = Path.Combine(_tempDir, "bundle.json");
-        File.WriteAllText(dummyBundle, """{"version":"1.0","kind":"trust-bundle","metadata":{"name":"test","created":"2024-01-01"}}""");
+        // Bundle with a signature field present — authority is required
+        File.WriteAllText(dummyBundle, """{"version":"1.0","kind":"trust-bundle","metadata":{"name":"test","created":"2024-01-01"},"signature":{"keyId":"abc","algorithm":"ecdsa-p256","publicKey":"AAAA","value":"BBBB","timestamp":"2024-01-01T00:00:00Z"}}""");
 
         var result = await CommandTestHelper.InvokeAsync(
             "verify", _artifactPath,
             "--trust-bundle", dummyBundle);
 
         Assert.Contains("--authority is required", result.StdErr);
+    }
+
+    [Fact]
+    public async Task Verify_with_trust_bundle_shows_REVOKED_for_revoked_key()
+    {
+        // Sign the artifact
+        await CommandTestHelper.InvokeAsync("sign", _artifactPath);
+
+        // Read the signature to get the key fingerprint
+        var sigPath = _artifactPath + ".sig.json";
+        var sigJson = File.ReadAllText(sigPath);
+        var envelope = System.Text.Json.JsonSerializer.Deserialize<Sigil.Signing.SignatureEnvelope>(sigJson);
+        var fingerprint = envelope!.Signatures[0].KeyId;
+
+        // Create a trust bundle with the key AND a revocation for it
+        var bundlePath = Path.Combine(_tempDir, "trust.json");
+        await CommandTestHelper.InvokeAsync("trust", "create", "--name", "test", "-o", bundlePath);
+        await CommandTestHelper.InvokeAsync("trust", "add", bundlePath, "--fingerprint", fingerprint);
+
+        // Add a revocation manually (bundle is unsigned, so we can modify it)
+        var bundleJson = File.ReadAllText(bundlePath);
+        var bundle = System.Text.Json.JsonSerializer.Deserialize<Sigil.Trust.TrustBundle>(bundleJson);
+        bundle!.Revocations.Add(new Sigil.Trust.RevocationEntry
+        {
+            Fingerprint = fingerprint,
+            RevokedAt = "2026-02-09T10:00:00Z",
+            Reason = "Testing revocation"
+        });
+        File.WriteAllText(bundlePath, System.Text.Json.JsonSerializer.Serialize(bundle, s_jsonOptions));
+
+        // Verify without --authority (unsigned bundle, no signature check needed)
+        var result = await CommandTestHelper.InvokeAsync("verify", _artifactPath,
+            "--trust-bundle", bundlePath);
+
+        Assert.Contains("REVOKED", result.StdOut);
     }
 }
