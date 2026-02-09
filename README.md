@@ -31,6 +31,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Verifying with trust](#verifying-with-trust)
   - [Scopes](#scopes)
   - [Endorsements](#endorsements)
+  - [Revoking keys](#revoking-keys)
   - [Viewing a bundle](#viewing-a-bundle)
   - [How trust evaluation works](#how-trust-evaluation-works)
   - [Trust bundle format](#trust-bundle-format)
@@ -673,6 +674,29 @@ Endorsements are **non-transitive**: if Key A endorses Key B, and Key B endorses
 
 Endorsements can also have scopes and expiry dates, further restricting what the endorsed key is trusted for.
 
+### Revoking keys
+
+If a key is compromised or decommissioned, you can revoke it without re-signing the bundle. Revoked keys are rejected during trust evaluation even if they're still in the bundle's key list.
+
+```
+sigil trust revoke trust.json \
+  --fingerprint sha256:abc123... \
+  --reason "Key compromised"
+```
+
+When Sigil evaluates trust for a revoked key:
+
+```
+  [REVOKED] sha256:abc123...
+           Key revoked on 2026-02-09T10:00:00Z: Key compromised
+```
+
+Revocation is permanent and overrides everything — even a valid RFC 3161 timestamp predating the revocation won't save it. If a key is compromised, all signatures from that key are suspect.
+
+If a revoked key is used as an endorser, all its endorsements become invalid too. The endorsed keys fall back to `[UNTRUSTED]` since they lost their trust chain.
+
+After adding revocations, sign the bundle with `sigil trust sign` to lock in the changes.
+
 ### Viewing a bundle
 
 ```
@@ -694,6 +718,11 @@ Endorsements (1):
   sha256:abc123... -> sha256:bbb888...
     Statement: Authorized build key for CI
 
+Revocations (1):
+  sha256:999888...
+    Revoked at: 2026-02-09T10:00:00Z
+    Reason: Key compromised
+
 Signature: PRESENT
   Signed by: sha256:def456...
   Algorithm: ecdsa-p256
@@ -706,9 +735,10 @@ When you pass `--trust-bundle` and `--authority` to `sigil verify`, here's what 
 
 1. **Verify the bundle** — Check that the bundle is signed by the authority you specified. If not, the bundle is rejected entirely.
 2. **Check the crypto** — If the cryptographic signature is invalid, the key is `Untrusted` regardless of what the bundle says. Crypto trumps trust.
-3. **Look up the key** — Search for the signing key's fingerprint in the bundle's key list.
-4. **If found** — Check expiry, then check scopes. If everything passes: `Trusted`.
-5. **If not found** — Search endorsements where this key is endorsed by a key that *is* in the bundle (and that endorser isn't expired, and the endorsement isn't expired, and the scopes match). If found: `TrustedViaEndorsement`. Otherwise: `Untrusted`.
+3. **Check revocation** — If the signing key's fingerprint is in the bundle's revocation list, the key is `Revoked`. This overrides everything, including valid timestamps.
+4. **Look up the key** — Search for the signing key's fingerprint in the bundle's key list.
+5. **If found** — Check expiry, then check scopes. If everything passes: `Trusted`.
+6. **If not found** — Search endorsements where this key is endorsed by a key that *is* in the bundle (and that endorser isn't revoked, isn't expired, and the endorsement isn't expired, and the scopes match). If found: `TrustedViaEndorsement`. Otherwise: `Untrusted`.
 
 ### Trust bundle format
 
@@ -738,6 +768,13 @@ When you pass `--trust-bundle` and `--authority` to `sigil verify`, here's what 
       "endorsed": "sha256:bbb...",
       "statement": "Authorized build key",
       "timestamp": "2026-02-08T12:00:00Z"
+    }
+  ],
+  "revocations": [
+    {
+      "fingerprint": "sha256:999888...",
+      "revokedAt": "2026-02-09T10:00:00Z",
+      "reason": "Key compromised"
     }
   ],
   "signature": {
@@ -2138,6 +2175,7 @@ sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after
 sigil trust remove <bundle> --fingerprint <fp>
 sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
 sigil trust sign <bundle> --key <private.pem> | --vault <provider> --vault-key <reference> [-o path] [--passphrase "pass"]
+sigil trust revoke <bundle> --fingerprint <fp> [--reason "text"]
 sigil trust show <bundle>
 sigil log append <envelope> [--log <path>] [--signature-index <n>]
 sigil log verify [--log <path>] [--checkpoint <path>]
@@ -2205,7 +2243,9 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 
 **trust sign**: Sign a bundle with an authority key. Either `--key` or `--vault`/`--vault-key` is required (mutually exclusive). This locks the bundle — modifications require re-signing.
 
-**trust show**: Display the contents of a trust bundle (keys, endorsements, signature status).
+**trust revoke**: Revoke a key in an unsigned bundle. The key remains in the key list but is marked as revoked. Revoked keys are rejected during trust evaluation. The bundle must be re-signed after adding revocations.
+
+**trust show**: Display the contents of a trust bundle (keys, endorsements, revocations, signature status).
 
 **log append**: Append a signing event to the transparency log.
 - `<envelope>` is the path to a `.sig.json` file
@@ -2408,7 +2448,6 @@ A typical GitHub Actions workflow using the local tool:
 
 ## What's coming
 
-- **Signature revocation** — Revoke individual signatures or keys without re-signing the trust bundle.
 - **Batch/manifest signing** — Sign multiple files in one operation with a single envelope.
 - **P-521 support** — ECDSA P-521 curve (same `ECDsa` code path as P-256/P-384).
 - **Keyless/OIDC signing** — Authenticate with OIDC (GitHub Actions, Google, Microsoft), get a short-lived certificate, sign without key management. Sigstore-compatible workflow without cloud dependency.
