@@ -48,6 +48,12 @@ public class GpgStatusEmitterTests
     }
 
     [Fact]
+    public void NewSig_emits_correct_format()
+    {
+        Assert.Equal("[GNUPG:] NEWSIG", GpgStatusEmitter.NewSig());
+    }
+
+    [Fact]
     public void TrustFully_and_TrustUndefined_emit_correct_format()
     {
         Assert.Equal("[GNUPG:] TRUST_FULLY 0 sigil", GpgStatusEmitter.TrustFully());

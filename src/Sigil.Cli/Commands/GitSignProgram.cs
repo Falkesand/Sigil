@@ -79,7 +79,10 @@ public static class GitSignProgram
             return 1;
         }
 
-        var contentBytes = Encoding.UTF8.GetBytes(content);
+        // Normalize git content: git sends content WITH a blank line (header/body separator)
+        // during signing, but WITHOUT it during verification (gpgsig stripping consumes it).
+        // Remove the blank line so the stored digest matches verification content.
+        var contentBytes = NormalizeGitContent(Encoding.UTF8.GetBytes(content));
 
         ISigner? signer = null;
         IKeyProvider? provider = null;
@@ -225,13 +228,18 @@ public static class GitSignProgram
         }
 
         // Read commit/tag content from stdin
+        // Normalize: git sends content WITHOUT blank line during verification
+        // (gpgsig stripping consumes it). Signing also normalizes, so both paths match.
         var content = stdin.ReadToEnd();
-        var contentBytes = Encoding.UTF8.GetBytes(content);
+        var contentBytes = NormalizeGitContent(Encoding.UTF8.GetBytes(content));
 
         // Verify using the standard SignatureValidator
         var result = SignatureValidator.Verify(contentBytes, envelope);
 
         var statusWriter = GetStatusWriter(parsed.StatusFd, stdout, stderr);
+
+        // NEWSIG must precede GOODSIG/BADSIG — git checks for "\n[GNUPG:] GOODSIG"
+        statusWriter.WriteLine(GpgStatusEmitter.NewSig());
 
         if (result.AllSignaturesValid)
         {
@@ -322,6 +330,31 @@ public static class GitSignProgram
         }
 
         return new ParsedArgs(keyPath, passphrase, verifyFile, statusFd, vaultName, vaultKey);
+    }
+
+    /// <summary>
+    /// Normalizes git commit/tag content for signing.
+    /// Git sends content WITH a blank line (header/body separator) during signing,
+    /// but WITHOUT it during verification (gpgsig header stripping consumes it).
+    /// This method removes the first blank line so the digest matches both paths.
+    /// </summary>
+    internal static byte[] NormalizeGitContent(byte[] content)
+    {
+        // Find the first \n\n sequence (header/body separator in git objects)
+        for (int i = 0; i < content.Length - 1; i++)
+        {
+            if (content[i] == (byte)'\n' && content[i + 1] == (byte)'\n')
+            {
+                // Remove one \n — shift everything after index i+1 left by 1
+                var result = new byte[content.Length - 1];
+                Buffer.BlockCopy(content, 0, result, 0, i + 1);
+                Buffer.BlockCopy(content, i + 2, result, i + 1, content.Length - i - 2);
+                return result;
+            }
+        }
+
+        // No blank line found — return as-is (shouldn't happen for valid git objects)
+        return content;
     }
 
     private sealed record ParsedArgs(

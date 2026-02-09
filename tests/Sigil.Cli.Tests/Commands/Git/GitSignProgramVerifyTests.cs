@@ -62,9 +62,13 @@ public class GitSignProgramVerifyTests : IDisposable
 
         Assert.Equal(0, exitCode);
         var output = stdout.ToString();
+        Assert.Contains("[GNUPG:] NEWSIG", output);
         Assert.Contains("[GNUPG:] GOODSIG", output);
         Assert.Contains("[GNUPG:] VALIDSIG", output);
         Assert.Contains("[GNUPG:] TRUST_UNDEFINED", output);
+        // Git requires "\n[GNUPG:] GOODSIG" — NEWSIG must precede GOODSIG
+        Assert.True(output.IndexOf("NEWSIG", StringComparison.Ordinal) <
+                    output.IndexOf("GOODSIG", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -86,7 +90,9 @@ public class GitSignProgramVerifyTests : IDisposable
             stdin, stdout, stderr);
 
         Assert.Equal(1, exitCode);
-        Assert.Contains("[GNUPG:] BADSIG", stdout.ToString());
+        var output = stdout.ToString();
+        Assert.Contains("[GNUPG:] NEWSIG", output);
+        Assert.Contains("[GNUPG:] BADSIG", output);
     }
 
     [Fact]
@@ -145,6 +151,7 @@ public class GitSignProgramVerifyTests : IDisposable
 
         Assert.Equal(0, exitCode);
         var errOutput = stderr.ToString();
+        Assert.Contains("[GNUPG:] NEWSIG", errOutput);
         Assert.Contains("[GNUPG:] GOODSIG", errOutput);
         Assert.DoesNotContain("[GNUPG:]", stdout.ToString());
     }

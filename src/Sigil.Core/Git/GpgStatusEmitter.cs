@@ -19,6 +19,15 @@ public static class GpgStatusEmitter
     }
 
     /// <summary>
+    /// Emits NEWSIG status to indicate start of a new signature verification.
+    /// Git requires this before GOODSIG/BADSIG (strstr checks for "\n[GNUPG:] GOODSIG").
+    /// </summary>
+    public static string NewSig()
+    {
+        return "[GNUPG:] NEWSIG";
+    }
+
+    /// <summary>
     /// Emits GOODSIG status for successful verification.
     /// Format: [GNUPG:] GOODSIG {keyId} {keyId}
     /// </summary>
