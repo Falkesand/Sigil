@@ -17,6 +17,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Add a timestamp](#add-a-timestamp)
   - [Create an attestation](#create-an-attestation)
   - [Verify with a policy](#verify-with-a-policy)
+  - [Log a signing event](#log-a-signing-event)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -62,6 +63,16 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Policy rules](#policy-rules)
   - [Policies with attestations](#policies-with-attestations)
   - [Policy format](#policy-format)
+- [Transparency log](#transparency-log)
+  - [The problem transparency logs solve](#the-problem-transparency-logs-solve)
+  - [Append a signing event](#append-a-signing-event)
+  - [Verify log integrity](#verify-log-integrity)
+  - [Search the log](#search-the-log)
+  - [View log entries](#view-log-entries)
+  - [Inclusion proofs](#inclusion-proofs)
+  - [Consistency proofs](#consistency-proofs)
+  - [How the transparency log works](#how-the-transparency-log-works)
+  - [Log entry format](#log-entry-format)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -334,6 +345,36 @@ All policy rules PASSED.
 ```
 
 See [Policies](#policies) for details.
+
+### Log a signing event
+
+Record signing events in an append-only transparency log for auditing:
+
+```
+sigil sign release.tar.gz --key mykey.pem
+sigil log append release.tar.gz.sig.json
+```
+
+```
+Appended entry #0 to .sigil.log.jsonl
+  Key:      sha256:c017446b...
+  Artifact: release.tar.gz
+  Digest:   sha256:9c8b0e1d...
+```
+
+Verify the log hasn't been tampered with:
+
+```
+sigil log verify
+```
+
+Search for entries by key or artifact:
+
+```
+sigil log search --key sha256:c017446b...
+```
+
+See [Transparency log](#transparency-log) for details.
 
 ## Ephemeral vs persistent vs vault
 
@@ -1432,6 +1473,193 @@ sigil trust sign trust.json --vault pkcs11 --vault-key "pkcs11:token=YubiKey;obj
 - PINs in URIs may appear in shell history, process listings, and log files
 - The `--passphrase` option is reused for PKCS#11 PINs when using `--vault pkcs11`
 
+## Transparency log
+
+Signing events are ephemeral — once a file is signed, there's no auditable record that the event occurred. A transparency log adds an append-only, Merkle-tree-backed record of signing events that can be verified for integrity. This enables detection of compromised keys (did this key sign something unexpected?) and audit trails (what was signed, when, by whom?).
+
+The log is **local-first** — a JSONL file on disk, no server, no network calls. Integrity is guaranteed by an RFC 6962 Merkle tree with domain-separated hashing.
+
+### The problem transparency logs solve
+
+Without a transparency log, signing is fire-and-forget:
+
+> "Was this file signed?" — Yes, here's the `.sig.json`.
+
+With a transparency log, you can answer richer questions:
+
+> "What has this key signed? When was this artifact last signed? Has anyone tampered with the signing history?"
+
+### Append a signing event
+
+After signing a file, append the signing event to a log:
+
+```
+sigil sign release.tar.gz --key mykey.pem
+sigil log append release.tar.gz.sig.json
+```
+
+```
+Appended entry #0 to .sigil.log.jsonl
+  Key:      sha256:c017446b...
+  Artifact: release.tar.gz
+  Digest:   sha256:9c8b0e1d...
+```
+
+Each append creates a log entry and updates the Merkle tree checkpoint. Duplicate signatures are rejected — the same signature cannot be logged twice.
+
+For multi-signature envelopes, specify which signature to log:
+
+```
+sigil log append release.tar.gz.sig.json --signature-index 1
+```
+
+### Verify log integrity
+
+Check that no entries have been tampered with and the Merkle root matches the checkpoint:
+
+```
+sigil log verify
+```
+
+```
+Log integrity verified.
+  Entries:     42
+  Root hash:   a1b2c3d4...
+  Checkpoint:  MATCH
+```
+
+If someone modifies a log entry:
+
+```
+INTEGRITY VIOLATION detected.
+  Invalid entries: [3, 17]
+  Checkpoint:      MISMATCH
+```
+
+### Search the log
+
+Find entries by key fingerprint, artifact name, or digest:
+
+```
+sigil log search --key sha256:c017446b...
+```
+
+```
+Found 3 entries:
+  [0] release-v1.tar.gz  2026-02-09T10:00:00Z  ecdsa-p256
+  [5] release-v2.tar.gz  2026-02-09T14:30:00Z  ecdsa-p256
+  [8] hotfix.tar.gz      2026-02-09T16:00:00Z  ecdsa-p256
+```
+
+```
+sigil log search --artifact release.tar.gz
+sigil log search --digest sha256:9c8b0e1d...
+```
+
+At least one search filter is required.
+
+### View log entries
+
+Display all entries in the log:
+
+```
+sigil log show
+```
+
+```
+Showing 3 entries:
+  [0] release.tar.gz     sha256:c017446b...  2026-02-09T10:00:00Z  ecdsa-p256
+  [1] my-app.dll         sha256:a1b2c3d4...  2026-02-09T11:00:00Z  ecdsa-p384
+  [2] config.json        sha256:d4e5f6a7...  2026-02-09T12:00:00Z  ecdsa-p256
+```
+
+Paginate with `--limit` and `--offset`:
+
+```
+sigil log show --limit 10 --offset 20
+```
+
+### Inclusion proofs
+
+Prove that a specific entry exists in the log without downloading the entire log:
+
+```
+sigil log proof --index 1
+```
+
+```
+Inclusion proof:
+  Leaf index: 1
+  Tree size:  42
+  Root hash:  a1b2c3d4...
+  Hashes:     6
+Inclusion proof VERIFIED.
+```
+
+### Consistency proofs
+
+Prove that the log has only been appended to (never modified or truncated) by comparing an earlier tree state to the current one:
+
+```
+sigil log proof --old-size 10
+```
+
+```
+Consistency proof:
+  Old size:  10
+  New size:  42
+  Old root:  e5f6a7b8...
+  New root:  a1b2c3d4...
+  Hashes:    4
+Consistency proof VERIFIED.
+```
+
+### How the transparency log works
+
+**Append-only.** Entries are only appended, never modified or deleted. Each entry records a signing event: who signed (key fingerprint), what was signed (artifact name and digest), when (timestamp), and with what algorithm.
+
+**Merkle tree (RFC 6962).** The log maintains a binary hash tree over all entries. Each leaf is `SHA-256(0x00 || JCS(entry))` (domain-separated from internal nodes). Internal nodes are `SHA-256(0x01 || left || right)`. This enables:
+
+- **Tamper detection** — Modifying any entry changes its leaf hash, which propagates up to a different root hash. The checkpoint stores the expected root.
+- **Inclusion proofs** — O(log n) proof that a specific entry is in the log, without revealing other entries.
+- **Consistency proofs** — O(log n) proof that a newer log is a strict append of an older log, without comparing all entries.
+
+**JCS canonicalization.** Leaf hashes are computed over the JCS-canonicalized (RFC 8785) JSON of the entry, excluding the `leafHash` field itself. This ensures deterministic, reproducible hashes regardless of JSON serialization order.
+
+**Atomic checkpoint.** After each append, the Merkle root and tree size are written to a checkpoint file using write-to-temp-then-rename for crash safety.
+
+**Duplicate detection.** The SHA-256 of the signature bytes is stored in each entry. Attempting to log the same signature twice returns an error.
+
+### Log entry format
+
+Each line in the `.sigil.log.jsonl` file is a JSON object:
+
+```json
+{
+  "index": 0,
+  "timestamp": "2026-02-09T10:00:00.0000000Z",
+  "keyId": "sha256:c017446b...",
+  "algorithm": "ecdsa-p256",
+  "artifactName": "release.tar.gz",
+  "artifactDigest": "sha256:9c8b0e1d...",
+  "signatureDigest": "sha256:a1b2c3d4...",
+  "label": "ci-pipeline",
+  "leafHash": "e5f6a7b8..."
+}
+```
+
+The `label` field is omitted when null. The `leafHash` is computed from all other fields via JCS canonicalization and domain-separated Merkle leaf hashing.
+
+The checkpoint file (`.sigil.checkpoint`) stores the current tree state:
+
+```json
+{
+  "treeSize": 42,
+  "rootHash": "a1b2c3d4...",
+  "timestamp": "2026-02-09T16:00:00.0000000Z"
+}
+```
+
 ## CLI reference
 
 ```
@@ -1447,6 +1675,11 @@ sigil trust remove <bundle> --fingerprint <fp>
 sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
 sigil trust sign <bundle> --key <private.pem> | --vault <provider> --vault-key <reference> [-o path] [--passphrase "pass"]
 sigil trust show <bundle>
+sigil log append <envelope> [--log <path>] [--signature-index <n>]
+sigil log verify [--log <path>] [--checkpoint <path>]
+sigil log search [--log <path>] [--key <fp>] [--artifact <name>] [--digest <sha256>]
+sigil log show [--log <path>] [--limit <n>] [--offset <n>]
+sigil log proof [--log <path>] [--index <n>] [--old-size <m>]
 sigil discover well-known <domain> [-o path]
 sigil discover dns <domain> [-o path]
 sigil discover git <url> [-o path]
@@ -1506,6 +1739,29 @@ sigil discover git <url> [-o path]
 **trust sign**: Sign a bundle with an authority key. Either `--key` or `--vault`/`--vault-key` is required (mutually exclusive). This locks the bundle — modifications require re-signing.
 
 **trust show**: Display the contents of a trust bundle (keys, endorsements, signature status).
+
+**log append**: Append a signing event to the transparency log.
+- `<envelope>` is the path to a `.sig.json` file
+- `--log` overrides the default log path (`.sigil.log.jsonl`)
+- `--signature-index` selects which signature to log from a multi-signature envelope (default: 0)
+- Duplicate signatures are rejected
+
+**log verify**: Verify the integrity of the transparency log.
+- Recomputes all leaf hashes and the Merkle root
+- Checks the root matches the checkpoint file
+- Reports invalid entries and checkpoint mismatches
+
+**log search**: Search the log by key fingerprint, artifact name, or digest.
+- At least one filter is required (`--key`, `--artifact`, or `--digest`)
+- Filters can be combined (AND logic)
+
+**log show**: Display all log entries.
+- `--limit` and `--offset` for pagination
+
+**log proof**: Generate and verify inclusion or consistency proofs.
+- `--index` alone generates an inclusion proof (proves entry exists in the log)
+- `--old-size` alone generates a consistency proof (proves the log is append-only)
+- At least one of `--index` or `--old-size` is required
 
 **discover well-known**: Fetch a trust bundle from `https://domain/.well-known/sigil/trust.json`.
 
@@ -1642,7 +1898,6 @@ A typical GitHub Actions workflow using the local tool:
 
 ## What's coming
 
-- **Transparency log** — Append-only Merkle tree log for auditable signing events.
 - **Git commit signing** — Drop-in replacement for GPG via `gpg.program` / `gpg.format`.
 - **Container/OCI signing** — Sign container images in OCI registries using the referrers API.
 - **Signature revocation** — Revoke individual signatures or keys without re-signing the trust bundle.
