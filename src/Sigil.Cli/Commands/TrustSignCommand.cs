@@ -97,6 +97,10 @@ public static class TrustSignCommand
                 }
 
                 using var signer = signerResult.Value;
+
+                if (string.Equals(vaultName, "pkcs11", StringComparison.OrdinalIgnoreCase))
+                    Console.Error.WriteLine("Waiting for PKCS#11 device (touch may be required)...");
+
                 var signResult = await BundleSigner.SignAsync(bundle, signer);
                 if (!signResult.IsSuccess)
                 {

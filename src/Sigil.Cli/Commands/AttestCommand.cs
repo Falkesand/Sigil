@@ -133,6 +133,9 @@ public static class AttestCommand
                 using var signer = signerResult.Value;
                 var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
 
+                if (string.Equals(vaultName, "pkcs11", StringComparison.OrdinalIgnoreCase))
+                    Console.Error.WriteLine("Waiting for PKCS#11 device (touch may be required)...");
+
                 var envelope = await SignOrAppendAsync(outputPath, statement, signer, fingerprint);
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
 
