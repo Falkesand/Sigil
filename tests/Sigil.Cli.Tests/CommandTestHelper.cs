@@ -43,9 +43,18 @@ public static class CommandTestHelper
             rootCommand.Add(TimestampCommand.Create());
             rootCommand.Add(AttestCommand.Create());
             rootCommand.Add(VerifyAttestationCommand.Create());
+            rootCommand.Add(LogCommand.Create());
 
+            Environment.ExitCode = 0;
             var config = new CommandLineConfiguration(rootCommand);
             var exitCode = await config.InvokeAsync(args);
+
+            // Some commands set Environment.ExitCode directly
+            if (Environment.ExitCode != 0)
+            {
+                exitCode = Environment.ExitCode;
+                Environment.ExitCode = 0;
+            }
 
             return new CommandResult(
                 exitCode,

@@ -19,6 +19,7 @@ rootCommand.Add(DiscoverCommand.Create());
 rootCommand.Add(TimestampCommand.Create());
 rootCommand.Add(AttestCommand.Create());
 rootCommand.Add(VerifyAttestationCommand.Create());
+rootCommand.Add(LogCommand.Create());
 
 var config = new CommandLineConfiguration(rootCommand);
 return await config.InvokeAsync(args);
