@@ -76,8 +76,11 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Log entry format](#log-entry-format)
 - [Git commit signing](#git-commit-signing)
   - [Configure git to use Sigil](#configure-git-to-use-sigil)
+  - [Sign with a vault key (no private key on disk)](#sign-with-a-vault-key-no-private-key-on-disk)
+  - [Sign with an encrypted PEM key](#sign-with-an-encrypted-pem-key)
   - [Sign commits and tags](#sign-commits-and-tags)
   - [Verify commits](#verify-commits)
+  - [Wrapper script reference](#wrapper-script-reference)
   - [How git signing works](#how-git-signing-works)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
@@ -389,9 +392,16 @@ Sigil can replace GPG for git commit and tag signing:
 
 ```
 sigil generate -o mykey
-sigil git config --key mykey.pem
-git commit -S -m "Signed with Sigil"
+sigil git config --key mykey.pem --global
+git commit -m "Signed with Sigil"
 git verify-commit HEAD
+```
+
+Or sign with a vault key — no private key on disk:
+
+```
+sigil git config --vault hashicorp --vault-key transit/my-signing-key --global
+git commit -m "Signed with vault key"
 ```
 
 See [Git commit signing](#git-commit-signing) for details.
@@ -1714,6 +1724,68 @@ sigil git config --key mykey.pem --global
 
 With `--global`, `commit.gpgsign = true` is also set, so every commit is signed without needing `-S`.
 
+### Sign with a vault key (no private key on disk)
+
+Configure git to sign commits using a vault provider. The private key never touches disk — it stays in the vault or hardware token:
+
+```
+sigil git config --vault hashicorp --vault-key transit/my-signing-key
+```
+
+```
+Git signing configured with Sigil.
+  Key: sha256:7f2a3b...
+  Wrapper: /home/user/.sigil/git-sign.sh
+  Scope: local
+```
+
+This works with all vault providers:
+
+```
+sigil git config --vault azure --vault-key my-signing-key --global
+sigil git config --vault aws --vault-key alias/my-signing-key --global
+sigil git config --vault gcp --vault-key projects/p/locations/us/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1 --global
+sigil git config --vault pkcs11 --vault-key "pkcs11:token=YubiKey;object=my-key" --global
+```
+
+Vault authentication uses environment variables at commit time (not stored in the wrapper script). See [Vault-backed signing](#vault-backed-signing) for setup details per provider.
+
+### Sign with an encrypted PEM key
+
+If your PEM key is passphrase-protected, you can provide the passphrase at config time:
+
+```
+sigil git config --key mykey.pem --passphrase "my secret"
+```
+
+This embeds the passphrase in the wrapper script. A warning is displayed:
+
+```
+Warning: Passphrase is stored in plaintext in the wrapper script.
+  File: /home/user/.sigil/git-sign.sh
+  Consider using SIGIL_PASSPHRASE environment variable instead.
+```
+
+**Recommended**: Use the `SIGIL_PASSPHRASE` environment variable instead. This avoids storing the passphrase on disk:
+
+```
+sigil git config --key mykey.pem
+```
+
+Then set the environment variable in your shell profile:
+
+```bash
+# ~/.bashrc or ~/.zshrc
+export SIGIL_PASSPHRASE="my secret"
+```
+
+```powershell
+# PowerShell profile
+$env:SIGIL_PASSPHRASE = "my secret"
+```
+
+The `--passphrase` CLI argument takes precedence over the environment variable if both are set.
+
 ### Sign commits and tags
 
 Once configured, sign commits with the `-S` flag:
@@ -1743,9 +1815,10 @@ git log --show-signature -1
 Git displays `[GNUPG:]` status messages from Sigil:
 
 ```
-[GNUPG:] GOODSIG sha256:c017446b...
+[GNUPG:] NEWSIG
+[GNUPG:] GOODSIG sha256:c017446b... sha256:c017446b...
 [GNUPG:] VALIDSIG sha256:c017446b... 2026-02-09T14:30:00Z ecdsa-p256
-[GNUPG:] TRUST_UNDEFINED
+[GNUPG:] TRUST_UNDEFINED 0 sigil
 ```
 
 `TRUST_UNDEFINED` is emitted because git-sign performs cryptographic verification only — no trust bundle evaluation. The signature is valid, but trust decisions are left to the user.
@@ -1755,6 +1828,64 @@ Verify tags:
 ```
 git verify-tag v1.0
 ```
+
+### Wrapper script reference
+
+`sigil git config` generates a thin wrapper script in `~/.sigil/` that forwards all arguments to `sigil git-sign`. You can also write these manually if you need custom behavior.
+
+**PEM key (Unix)** — `~/.sigil/git-sign.sh`:
+
+```bash
+#!/bin/sh
+exec "sigil" git-sign --key "/path/to/key.pem" "$@"
+```
+
+**PEM key (Windows)** — `%USERPROFILE%\.sigil\git-sign.bat`:
+
+```batch
+@"sigil" git-sign --key "C:\path\to\key.pem" %*
+```
+
+**Vault provider (Unix)** — `~/.sigil/git-sign.sh`:
+
+```bash
+#!/bin/sh
+exec "sigil" git-sign --vault hashicorp --vault-key "transit/my-signing-key" "$@"
+```
+
+**Vault provider (Windows)** — `%USERPROFILE%\.sigil\git-sign.bat`:
+
+```batch
+@"sigil" git-sign --vault "hashicorp" --vault-key "transit/my-signing-key" %*
+```
+
+**PKCS#11 hardware token (Unix)** — `~/.sigil/git-sign.sh`:
+
+```bash
+#!/bin/sh
+exec "sigil" git-sign --vault pkcs11 --vault-key "pkcs11:token=YubiKey;object=my-key" "$@"
+```
+
+After creating a wrapper script manually, configure git to use it:
+
+```bash
+# Unix
+chmod +x ~/.sigil/git-sign.sh
+git config --global gpg.format x509
+git config --global gpg.x509.program ~/.sigil/git-sign.sh
+git config --global user.signingkey "sha256:<your-key-fingerprint>"
+git config --global commit.gpgsign true
+```
+
+```batch
+:: Windows
+git config --global gpg.format x509
+git config --global gpg.x509.program "%USERPROFILE%\.sigil\git-sign.bat"
+git config --global user.signingkey "sha256:<your-key-fingerprint>"
+git config --global commit.gpgsign true
+```
+
+Get your key fingerprint from `sigil generate` output or by inspecting a signature envelope.
 
 ### How git signing works
 
@@ -1770,20 +1901,11 @@ git verify-tag v1.0
 
 Inside the armor is a standard Sigil envelope — the same format used for file signing. The subject name is `git-object` (works for both commits and tags).
 
-**Wrapper script.** Git requires `gpg.x509.program` to be a single executable path. `sigil git config` generates a thin wrapper script in `~/.sigil/` that forwards all arguments to `sigil git-sign`:
+**Content normalization.** Git sends commit content with a blank line (`\n\n`) separating headers from the body during signing, but strips it during verification (the `gpgsig` header insertion consumes it). Sigil normalizes content by removing the first blank line in both paths, ensuring the digest matches regardless of which path git uses.
 
-Unix (`~/.sigil/git-sign.sh`):
-```bash
-#!/bin/sh
-exec "sigil" git-sign --key "/path/to/key.pem" "$@"
-```
+**GPG status protocol.** Git's `verify_gpg_signed_buffer` parses GPG-format status messages on the status file descriptor. Sigil emits `NEWSIG`, `GOODSIG`/`BADSIG`, `VALIDSIG`, and `TRUST_UNDEFINED` in the order git expects. The `NEWSIG` line is required by git 2.52+ — without the preceding newline, git's `strstr` check for `"\n[GNUPG:] GOODSIG"` fails.
 
-Windows (`%USERPROFILE%\.sigil\git-sign.bat`):
-```batch
-@"sigil" git-sign --key "C:\path\to\key.pem" %*
-```
-
-**GPG compatibility.** Git passes GPG-style arguments (`--status-fd=2 -bsau <keyid>`) that don't conform to standard CLI conventions. Sigil intercepts these before its normal command parser and handles them with custom argument parsing.
+**GPG argument compatibility.** Git passes GPG-style arguments (`--status-fd=2 -bsau <keyid>`) that don't conform to standard CLI conventions. Sigil intercepts these before its normal command parser and handles them with custom argument parsing.
 
 **Self-contained verification.** Like all Sigil signatures, the public key is embedded in the envelope. Verification uses the existing `SignatureValidator` — no separate key import or key server lookup needed.
 
@@ -1810,7 +1932,7 @@ sigil log proof [--log <path>] [--index <n>] [--old-size <m>]
 sigil discover well-known <domain> [-o path]
 sigil discover dns <domain> [-o path]
 sigil discover git <url> [-o path]
-sigil git config --key <private.pem> [--global] [--passphrase "pass"]
+sigil git config --key <private.pem> | --vault <provider> --vault-key <reference> [--global] [--passphrase "pass"]
 ```
 
 **generate**: Create a key pair for persistent signing.
@@ -1898,11 +2020,13 @@ sigil git config --key <private.pem> [--global] [--passphrase "pass"]
 **discover git**: Shallow-clone a git repository and read `.sigil/trust.json` or `trust.json`. Use `#branch` in the URL for a specific branch or tag.
 
 **git config**: Configure git to use Sigil for commit/tag signing.
-- `--key` is required — path to the private key PEM file
+- `--key` or `--vault`/`--vault-key` is required (mutually exclusive)
+- `--key`: path to the private key PEM file
+- `--vault` and `--vault-key`: vault provider and key reference (see [Vault-backed signing](#vault-backed-signing))
 - `--global` sets git config globally and enables `commit.gpgsign = true`
 - Without `--global`, config is local (per-repository) and commits must be signed with `-S`
 - Generates a wrapper script in `~/.sigil/` and sets `gpg.format`, `gpg.x509.program`, and `user.signingkey`
-- `--passphrase` embeds the passphrase in the wrapper script (a warning is displayed)
+- `--passphrase` embeds the passphrase in the wrapper script (consider `SIGIL_PASSPHRASE` env var instead)
 
 ## Dotnet tool reference
 
