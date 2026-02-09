@@ -2,6 +2,7 @@ namespace Sigil.Cli.Tests.Commands;
 
 public class TrustRevokeCommandTests : IDisposable
 {
+    private const string ValidFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private readonly string _tempDir;
 
     public TrustRevokeCommandTests()
@@ -21,15 +22,15 @@ public class TrustRevokeCommandTests : IDisposable
     {
         var bundlePath = Path.Combine(_tempDir, "trust.json");
         await CommandTestHelper.InvokeAsync("trust", "create", "--name", "test", "-o", bundlePath);
-        await CommandTestHelper.InvokeAsync("trust", "add", bundlePath, "--fingerprint", "sha256:abc123");
+        await CommandTestHelper.InvokeAsync("trust", "add", bundlePath, "--fingerprint", ValidFingerprint);
 
         var result = await CommandTestHelper.InvokeAsync(
-            "trust", "revoke", bundlePath, "--fingerprint", "sha256:abc123", "--reason", "Key compromised");
+            "trust", "revoke", bundlePath, "--fingerprint", ValidFingerprint, "--reason", "Key compromised");
 
-        Assert.Contains("Revoked key sha256:abc123", result.StdOut);
+        Assert.Contains($"Revoked key {ValidFingerprint}", result.StdOut);
 
         var json = File.ReadAllText(bundlePath);
-        Assert.Contains("sha256:abc123", json);
+        Assert.Contains(ValidFingerprint, json);
         Assert.Contains("Key compromised", json);
         Assert.Contains("revokedAt", json);
     }
@@ -39,12 +40,12 @@ public class TrustRevokeCommandTests : IDisposable
     {
         var bundlePath = Path.Combine(_tempDir, "trust.json");
         await CommandTestHelper.InvokeAsync("trust", "create", "--name", "test", "-o", bundlePath);
-        await CommandTestHelper.InvokeAsync("trust", "add", bundlePath, "--fingerprint", "sha256:abc123");
+        await CommandTestHelper.InvokeAsync("trust", "add", bundlePath, "--fingerprint", ValidFingerprint);
 
         var result = await CommandTestHelper.InvokeAsync(
-            "trust", "revoke", bundlePath, "--fingerprint", "sha256:abc123");
+            "trust", "revoke", bundlePath, "--fingerprint", ValidFingerprint);
 
-        Assert.Contains("Revoked key sha256:abc123", result.StdOut);
+        Assert.Contains($"Revoked key {ValidFingerprint}", result.StdOut);
     }
 
     [Fact]
@@ -59,7 +60,7 @@ public class TrustRevokeCommandTests : IDisposable
         await CommandTestHelper.InvokeAsync("trust", "sign", bundlePath, "--key", keyPath);
 
         var result = await CommandTestHelper.InvokeAsync(
-            "trust", "revoke", bundlePath, "--fingerprint", "sha256:abc123", "--reason", "test");
+            "trust", "revoke", bundlePath, "--fingerprint", ValidFingerprint, "--reason", "test");
 
         Assert.Contains("Cannot modify a signed bundle", result.StdErr);
     }
@@ -70,26 +71,54 @@ public class TrustRevokeCommandTests : IDisposable
         var bundlePath = Path.Combine(_tempDir, "nonexistent.json");
 
         var result = await CommandTestHelper.InvokeAsync(
-            "trust", "revoke", bundlePath, "--fingerprint", "sha256:abc123", "--reason", "test");
+            "trust", "revoke", bundlePath, "--fingerprint", ValidFingerprint, "--reason", "test");
 
         Assert.Contains("Bundle not found", result.StdErr);
     }
 
     [Fact]
-    public async Task Revoke_duplicate_fingerprint_adds_second_entry()
+    public async Task Revoke_rejects_invalid_fingerprint_format()
+    {
+        var bundlePath = Path.Combine(_tempDir, "trust.json");
+        await CommandTestHelper.InvokeAsync("trust", "create", "--name", "test", "-o", bundlePath);
+
+        var result = await CommandTestHelper.InvokeAsync(
+            "trust", "revoke", bundlePath, "--fingerprint", "not-a-valid-fingerprint", "--reason", "test");
+
+        Assert.Contains("Invalid fingerprint format", result.StdErr);
+    }
+
+    [Fact]
+    public async Task Revoke_rejects_reason_exceeding_max_length()
+    {
+        var bundlePath = Path.Combine(_tempDir, "trust.json");
+        await CommandTestHelper.InvokeAsync("trust", "create", "--name", "test", "-o", bundlePath);
+
+        var longReason = new string('x', 1025);
+        var result = await CommandTestHelper.InvokeAsync(
+            "trust", "revoke", bundlePath, "--fingerprint", ValidFingerprint, "--reason", longReason);
+
+        Assert.Contains("Reason must not exceed 1024 characters", result.StdErr);
+    }
+
+    [Fact]
+    public async Task Revoke_warns_on_duplicate_fingerprint()
     {
         var bundlePath = Path.Combine(_tempDir, "trust.json");
         await CommandTestHelper.InvokeAsync("trust", "create", "--name", "test", "-o", bundlePath);
 
         await CommandTestHelper.InvokeAsync(
-            "trust", "revoke", bundlePath, "--fingerprint", "sha256:abc123", "--reason", "First");
-        await CommandTestHelper.InvokeAsync(
-            "trust", "revoke", bundlePath, "--fingerprint", "sha256:abc123", "--reason", "Second");
+            "trust", "revoke", bundlePath, "--fingerprint", ValidFingerprint, "--reason", "First");
+        var result = await CommandTestHelper.InvokeAsync(
+            "trust", "revoke", bundlePath, "--fingerprint", ValidFingerprint, "--reason", "Second");
+
+        Assert.Contains("already revoked", result.StdErr);
 
         var json = File.ReadAllText(bundlePath);
         var bundle = System.Text.Json.JsonSerializer.Deserialize<Sigil.Trust.TrustBundle>(json);
 
-        Assert.Equal(2, bundle!.Revocations.Count);
+        // Should NOT add a second entry
+        Assert.Single(bundle!.Revocations);
     }
 
     [Fact]
@@ -98,12 +127,12 @@ public class TrustRevokeCommandTests : IDisposable
         var bundlePath = Path.Combine(_tempDir, "trust.json");
         await CommandTestHelper.InvokeAsync("trust", "create", "--name", "test", "-o", bundlePath);
         await CommandTestHelper.InvokeAsync(
-            "trust", "revoke", bundlePath, "--fingerprint", "sha256:abc123", "--reason", "Compromised");
+            "trust", "revoke", bundlePath, "--fingerprint", ValidFingerprint, "--reason", "Compromised");
 
         var result = await CommandTestHelper.InvokeAsync("trust", "show", bundlePath);
 
         Assert.Contains("Revocations (1):", result.StdOut);
-        Assert.Contains("sha256:abc123", result.StdOut);
+        Assert.Contains(ValidFingerprint, result.StdOut);
         Assert.Contains("Compromised", result.StdOut);
     }
 }
