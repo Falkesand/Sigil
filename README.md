@@ -1503,6 +1503,11 @@ sigil trust sign trust.json --vault pkcs11 --vault-key "pkcs11:token=YubiKey;obj
 - PINs in URIs may appear in shell history, process listings, and log files
 - The `--passphrase` option is reused for PKCS#11 PINs when using `--vault pkcs11`
 
+**Touch-to-sign devices:** Some hardware tokens (YubiKeys, smart cards) require
+physical interaction before signing. Sigil prints "Waiting for PKCS#11 device
+(touch may be required)..." to stderr when this might apply. If your terminal
+appears to pause during signing, touch or press the button on your device.
+
 ## Transparency log
 
 Signing events are ephemeral — once a file is signed, there's no auditable record that the event occurred. A transparency log adds an append-only, Merkle-tree-backed record of signing events that can be verified for integrity. This enables detection of compromised keys (did this key sign something unexpected?) and audit trails (what was signed, when, by whom?).
@@ -1749,6 +1754,10 @@ sigil git config --vault pkcs11 --vault-key "pkcs11:token=YubiKey;object=my-key"
 ```
 
 Vault authentication uses environment variables at commit time (not stored in the wrapper script). See [Vault-backed signing](#vault-backed-signing) for setup details per provider.
+
+**Note:** If your PKCS#11 device requires touch-to-sign (e.g., YubiKey),
+the terminal will pause after `git commit` and display "Waiting for PKCS#11
+device (touch may be required)...". Touch your device to complete the signing.
 
 ### Sign with an encrypted PEM key
 

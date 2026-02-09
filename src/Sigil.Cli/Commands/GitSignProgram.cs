@@ -152,6 +152,9 @@ public static class GitSignProgram
                 fingerprint.Value, algorithm, timestamp, null);
 
             // Sign (async for vault, DIM delegates to sync for local)
+            if (string.Equals(parsed.VaultName, "pkcs11", StringComparison.OrdinalIgnoreCase))
+                stderr.WriteLine("Waiting for PKCS#11 device (touch may be required)...");
+
             var signatureBytes = await signer.SignAsync(payload);
 
             // Build envelope
