@@ -51,7 +51,25 @@ public static class TrustEvaluator
             };
         }
 
-        // Rule 2a: Look up key directly in bundle
+        // Rule 2: Check if key is revoked (applies to both direct and endorsement paths)
+        var revocation = bundle.Revocations.FirstOrDefault(r =>
+            string.Equals(r.Fingerprint, sig.KeyId, StringComparison.Ordinal));
+
+        if (revocation is not null)
+        {
+            var reason = revocation.Reason is not null
+                ? $"Key revoked on {revocation.RevokedAt}: {revocation.Reason}"
+                : $"Key revoked on {revocation.RevokedAt}.";
+
+            return new SignatureTrustResult
+            {
+                KeyId = sig.KeyId,
+                Decision = TrustDecision.Revoked,
+                Reason = reason
+            };
+        }
+
+        // Rule 3a: Look up key directly in bundle
         var keyEntry = bundle.Keys.FirstOrDefault(k =>
             string.Equals(k.Fingerprint, sig.KeyId, StringComparison.Ordinal));
 
@@ -60,7 +78,7 @@ public static class TrustEvaluator
             return EvaluateDirectKey(sig, keyEntry, artifactName, now);
         }
 
-        // Rule 2b: Search endorsements
+        // Rule 3b: Search endorsements
         return EvaluateViaEndorsement(sig, bundle, artifactName, now);
     }
 
@@ -121,6 +139,12 @@ public static class TrustEvaluator
                 string.Equals(k.Fingerprint, endorsement.Endorser, StringComparison.Ordinal));
 
             if (endorserKey is null)
+                continue;
+
+            // Check if endorser is revoked
+            var endorserRevoked = bundle.Revocations.Any(r =>
+                string.Equals(r.Fingerprint, endorsement.Endorser, StringComparison.Ordinal));
+            if (endorserRevoked)
                 continue;
 
             // Endorser must not be expired (unless timestamp proves signature predates expiry)
