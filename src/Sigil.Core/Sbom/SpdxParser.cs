@@ -20,6 +20,7 @@ public static class SpdxParser
             return null;
 
         string? name = root.TryGetProperty("name", out var n) ? n.GetString() : null;
+        var serialNumber = root.TryGetProperty("documentNamespace", out var dns) ? dns.GetString() : null;
         string? version = null;
         string? supplier = null;
         int componentCount = 0;
@@ -42,7 +43,7 @@ public static class SpdxParser
             }
         }
 
-        return new SbomMetadata(SbomFormat.Spdx, spdxVersion, name, version, supplier, componentCount);
+        return new SbomMetadata(SbomFormat.Spdx, spdxVersion, name, version, supplier, componentCount, serialNumber);
     }
 
     private static string? StripActorPrefix(string? value)

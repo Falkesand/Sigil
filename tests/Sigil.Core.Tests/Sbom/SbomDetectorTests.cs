@@ -15,7 +15,8 @@ public class SbomDetectorTests
             "my-app",
             "2.1.0",
             "Acme Corp",
-            42);
+            42,
+            "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79");
 
         var dict = metadata.ToDictionary();
 
@@ -25,6 +26,7 @@ public class SbomDetectorTests
         Assert.Equal("2.1.0", dict["sbom.version"]);
         Assert.Equal("Acme Corp", dict["sbom.supplier"]);
         Assert.Equal("42", dict["sbom.componentCount"]);
+        Assert.Equal("urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79", dict["sbom.serialNumber"]);
     }
 
     [Fact]
@@ -36,7 +38,8 @@ public class SbomDetectorTests
             null,
             null,
             null,
-            10);
+            10,
+            null);
 
         var dict = metadata.ToDictionary();
 
@@ -46,19 +49,20 @@ public class SbomDetectorTests
         Assert.False(dict.ContainsKey("sbom.name"));
         Assert.False(dict.ContainsKey("sbom.version"));
         Assert.False(dict.ContainsKey("sbom.supplier"));
+        Assert.False(dict.ContainsKey("sbom.serialNumber"));
     }
 
     [Fact]
     public void SbomMetadata_MediaType_CycloneDx()
     {
-        var metadata = new SbomMetadata(SbomFormat.CycloneDx, "1.6", null, null, null, 0);
+        var metadata = new SbomMetadata(SbomFormat.CycloneDx, "1.6", null, null, null, 0, null);
         Assert.Equal("application/vnd.cyclonedx+json", metadata.MediaType);
     }
 
     [Fact]
     public void SbomMetadata_MediaType_Spdx()
     {
-        var metadata = new SbomMetadata(SbomFormat.Spdx, "SPDX-2.3", null, null, null, 0);
+        var metadata = new SbomMetadata(SbomFormat.Spdx, "SPDX-2.3", null, null, null, 0, null);
         Assert.Equal("application/spdx+json", metadata.MediaType);
     }
 
@@ -69,6 +73,7 @@ public class SbomDetectorTests
         {
             "bomFormat": "CycloneDX",
             "specVersion": "1.6",
+            "serialNumber": "urn:uuid:12345678-1234-1234-1234-123456789abc",
             "metadata": {
                 "component": {
                     "name": "my-app",
@@ -93,6 +98,7 @@ public class SbomDetectorTests
         Assert.Equal("1.0.0", result.Version);
         Assert.Equal("Acme", result.Supplier);
         Assert.Equal(2, result.ComponentCount);
+        Assert.Equal("urn:uuid:12345678-1234-1234-1234-123456789abc", result.SerialNumber);
     }
 
     [Fact]
@@ -120,6 +126,7 @@ public class SbomDetectorTests
         Assert.Equal("3.0.0", result.Version);
         Assert.Equal("Acme Inc", result.Supplier);
         Assert.Equal(2, result.ComponentCount);
+        Assert.Equal("https://example.com/doc", result.SerialNumber);
     }
 
     [Fact]

@@ -29,6 +29,7 @@ public class SpdxParserTests
         Assert.Equal("1.2.3", result.Version);
         Assert.Equal("Acme Inc", result.Supplier);
         Assert.Equal(2, result.ComponentCount);
+        Assert.Equal("https://example.com/ns", result.SerialNumber);
     }
 
     [Fact]
@@ -49,6 +50,7 @@ public class SpdxParserTests
         Assert.Null(result.Version);
         Assert.Null(result.Supplier);
         Assert.Equal(0, result.ComponentCount);
+        Assert.Null(result.SerialNumber);
     }
 
     [Fact]

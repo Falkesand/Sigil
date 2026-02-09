@@ -12,6 +12,7 @@ public class CycloneDxParserTests
         {
             "bomFormat": "CycloneDX",
             "specVersion": "1.6",
+            "serialNumber": "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
             "metadata": {
                 "component": {
                     "name": "my-app",
@@ -36,6 +37,7 @@ public class CycloneDxParserTests
         Assert.Equal("2.0.0", result.Version);
         Assert.Equal("Acme Corp", result.Supplier);
         Assert.Equal(3, result.ComponentCount);
+        Assert.Equal("urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79", result.SerialNumber);
     }
 
     [Fact]
@@ -57,6 +59,7 @@ public class CycloneDxParserTests
         Assert.Null(result.Version);
         Assert.Null(result.Supplier);
         Assert.Equal(0, result.ComponentCount);
+        Assert.Null(result.SerialNumber);
     }
 
     [Fact]
