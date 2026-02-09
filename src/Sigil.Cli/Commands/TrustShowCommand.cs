@@ -71,6 +71,19 @@ public static class TrustShowCommand
                 }
             }
 
+            if (bundle.Revocations.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"Revocations ({bundle.Revocations.Count}):");
+                foreach (var rev in bundle.Revocations)
+                {
+                    Console.WriteLine($"  {rev.Fingerprint}");
+                    Console.WriteLine($"    Revoked at: {rev.RevokedAt}");
+                    if (rev.Reason is not null)
+                        Console.WriteLine($"    Reason: {rev.Reason}");
+                }
+            }
+
             Console.WriteLine();
             if (bundle.Signature is not null)
             {

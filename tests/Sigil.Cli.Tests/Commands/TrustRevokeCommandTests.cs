@@ -91,4 +91,19 @@ public class TrustRevokeCommandTests : IDisposable
 
         Assert.Equal(2, bundle!.Revocations.Count);
     }
+
+    [Fact]
+    public async Task Show_displays_revocations()
+    {
+        var bundlePath = Path.Combine(_tempDir, "trust.json");
+        await CommandTestHelper.InvokeAsync("trust", "create", "--name", "test", "-o", bundlePath);
+        await CommandTestHelper.InvokeAsync(
+            "trust", "revoke", bundlePath, "--fingerprint", "sha256:abc123", "--reason", "Compromised");
+
+        var result = await CommandTestHelper.InvokeAsync("trust", "show", bundlePath);
+
+        Assert.Contains("Revocations (1):", result.StdOut);
+        Assert.Contains("sha256:abc123", result.StdOut);
+        Assert.Contains("Compromised", result.StdOut);
+    }
 }
