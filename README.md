@@ -18,6 +18,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Create an attestation](#create-an-attestation)
   - [Verify with a policy](#verify-with-a-policy)
   - [Log a signing event](#log-a-signing-event)
+  - [Sign git commits](#sign-git-commits)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -73,6 +74,11 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Consistency proofs](#consistency-proofs)
   - [How the transparency log works](#how-the-transparency-log-works)
   - [Log entry format](#log-entry-format)
+- [Git commit signing](#git-commit-signing)
+  - [Configure git to use Sigil](#configure-git-to-use-sigil)
+  - [Sign commits and tags](#sign-commits-and-tags)
+  - [Verify commits](#verify-commits)
+  - [How git signing works](#how-git-signing-works)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -105,6 +111,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 | Works offline | Yes | No | Yes | Partial |
 | Hidden state on disk | None | None | `~/.gnupg/` | Varies |
 | SLSA attestations | Yes (DSSE/in-toto) | Yes | No | No |
+| Git commit signing | Yes (GPG drop-in) | No | Yes | No |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
 Sigil is for people who want to sign things **without asking permission from a cloud service**.
@@ -375,6 +382,19 @@ sigil log search --key sha256:c017446b...
 ```
 
 See [Transparency log](#transparency-log) for details.
+
+### Sign git commits
+
+Sigil can replace GPG for git commit and tag signing:
+
+```
+sigil generate -o mykey
+sigil git config --key mykey.pem
+git commit -S -m "Signed with Sigil"
+git verify-commit HEAD
+```
+
+See [Git commit signing](#git-commit-signing) for details.
 
 ## Ephemeral vs persistent vs vault
 
@@ -1660,6 +1680,113 @@ The checkpoint file (`.sigil.checkpoint`) stores the current tree state:
 }
 ```
 
+## Git commit signing
+
+Sigil integrates with git as a drop-in signing program. Git commits and tags are signed with full Sigil envelopes — self-contained verification, multi-algorithm support, and the same key infrastructure used for file signing. No GPG installation required.
+
+### Configure git to use Sigil
+
+Generate a key and configure git to use it:
+
+```
+sigil generate -o mykey
+sigil git config --key mykey.pem
+```
+
+```
+Git signing configured with Sigil.
+  Key: sha256:c017446b9040d...
+  Wrapper: /home/user/.sigil/git-sign.sh
+  Scope: local
+  Tip: Use -S flag to sign commits, or run with --global to sign all commits.
+```
+
+This sets three git config values:
+- `gpg.format = x509`
+- `gpg.x509.program` = path to a wrapper script in `~/.sigil/`
+- `user.signingkey` = your key fingerprint
+
+To sign all commits automatically:
+
+```
+sigil git config --key mykey.pem --global
+```
+
+With `--global`, `commit.gpgsign = true` is also set, so every commit is signed without needing `-S`.
+
+### Sign commits and tags
+
+Once configured, sign commits with the `-S` flag:
+
+```
+git commit -S -m "Signed commit"
+```
+
+Sign tags:
+
+```
+git tag -s v1.0 -m "Signed release"
+```
+
+With `--global` configuration, the `-S` and `-s` flags are not needed — all commits and tags are signed automatically.
+
+### Verify commits
+
+```
+git verify-commit HEAD
+```
+
+```
+git log --show-signature -1
+```
+
+Git displays `[GNUPG:]` status messages from Sigil:
+
+```
+[GNUPG:] GOODSIG sha256:c017446b...
+[GNUPG:] VALIDSIG sha256:c017446b... 2026-02-09T14:30:00Z ecdsa-p256
+[GNUPG:] TRUST_UNDEFINED
+```
+
+`TRUST_UNDEFINED` is emitted because git-sign performs cryptographic verification only — no trust bundle evaluation. The signature is valid, but trust decisions are left to the user.
+
+Verify tags:
+
+```
+git verify-tag v1.0
+```
+
+### How git signing works
+
+**Git's signing protocol.** Git delegates signing to an external program via `gpg.x509.program`. For signing, git pipes the commit/tag object to stdin and expects an armored signature on stdout. For verification, git writes the signature to a temp file and pipes the original content to stdin.
+
+**ASCII armor.** The signature stored in the git object is a Sigil envelope wrapped in ASCII armor:
+
+```
+-----BEGIN SIGNED MESSAGE-----
+<base64-encoded Sigil SignatureEnvelope JSON>
+-----END SIGNED MESSAGE-----
+```
+
+Inside the armor is a standard Sigil envelope — the same format used for file signing. The subject name is `git-object` (works for both commits and tags).
+
+**Wrapper script.** Git requires `gpg.x509.program` to be a single executable path. `sigil git config` generates a thin wrapper script in `~/.sigil/` that forwards all arguments to `sigil git-sign`:
+
+Unix (`~/.sigil/git-sign.sh`):
+```bash
+#!/bin/sh
+exec "sigil" git-sign --key "/path/to/key.pem" "$@"
+```
+
+Windows (`%USERPROFILE%\.sigil\git-sign.bat`):
+```batch
+@"sigil" git-sign --key "C:\path\to\key.pem" %*
+```
+
+**GPG compatibility.** Git passes GPG-style arguments (`--status-fd=2 -bsau <keyid>`) that don't conform to standard CLI conventions. Sigil intercepts these before its normal command parser and handles them with custom argument parsing.
+
+**Self-contained verification.** Like all Sigil signatures, the public key is embedded in the envelope. Verification uses the existing `SignatureValidator` — no separate key import or key server lookup needed.
+
 ## CLI reference
 
 ```
@@ -1683,6 +1810,7 @@ sigil log proof [--log <path>] [--index <n>] [--old-size <m>]
 sigil discover well-known <domain> [-o path]
 sigil discover dns <domain> [-o path]
 sigil discover git <url> [-o path]
+sigil git config --key <private.pem> [--global] [--passphrase "pass"]
 ```
 
 **generate**: Create a key pair for persistent signing.
@@ -1768,6 +1896,13 @@ sigil discover git <url> [-o path]
 **discover dns**: Look up `_sigil.domain` TXT records for a bundle URL, then fetch it.
 
 **discover git**: Shallow-clone a git repository and read `.sigil/trust.json` or `trust.json`. Use `#branch` in the URL for a specific branch or tag.
+
+**git config**: Configure git to use Sigil for commit/tag signing.
+- `--key` is required — path to the private key PEM file
+- `--global` sets git config globally and enables `commit.gpgsign = true`
+- Without `--global`, config is local (per-repository) and commits must be signed with `-S`
+- Generates a wrapper script in `~/.sigil/` and sets `gpg.format`, `gpg.x509.program`, and `user.signingkey`
+- `--passphrase` embeds the passphrase in the wrapper script (a warning is displayed)
 
 ## Dotnet tool reference
 
@@ -1876,6 +2011,12 @@ dotnet sigil discover well-known example.com -o trust.json
 dotnet sigil verify release.tar.gz --discover example.com
 ```
 
+**Git signing:**
+
+```
+dotnet sigil git config --key mykey.pem --global
+```
+
 ### CI/CD example
 
 A typical GitHub Actions workflow using the local tool:
@@ -1898,7 +2039,6 @@ A typical GitHub Actions workflow using the local tool:
 
 ## What's coming
 
-- **Git commit signing** — Drop-in replacement for GPG via `gpg.program` / `gpg.format`.
 - **Container/OCI signing** — Sign container images in OCI registries using the referrers API.
 - **Signature revocation** — Revoke individual signatures or keys without re-signing the trust bundle.
 - **Batch/manifest signing** — Sign multiple files in one operation with a single envelope.

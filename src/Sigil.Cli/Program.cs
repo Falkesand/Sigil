@@ -1,6 +1,13 @@
 using Sigil.Cli.Commands;
 using System.CommandLine;
 
+// Intercept git-sign before System.CommandLine — git passes GPG-compat args
+// that don't conform to System.CommandLine conventions.
+if (GitSignProgram.ShouldIntercept(args))
+{
+    return GitSignProgram.Run(args, Console.In, Console.Out, Console.Error);
+}
+
 var rootCommand = new RootCommand("Sign and verify software artifacts with distributed trust");
 
 rootCommand.Add(GenerateCommand.Create());
@@ -20,6 +27,7 @@ rootCommand.Add(TimestampCommand.Create());
 rootCommand.Add(AttestCommand.Create());
 rootCommand.Add(VerifyAttestationCommand.Create());
 rootCommand.Add(LogCommand.Create());
+rootCommand.Add(GitCommand.Create());
 
 var config = new CommandLineConfiguration(rootCommand);
 return await config.InvokeAsync(args);
