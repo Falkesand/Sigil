@@ -87,6 +87,8 @@ public static class VerifyCommand
                     Console.WriteLine($"Version: {version}");
                 if (metadata.TryGetValue("sbom.supplier", out var supplier))
                     Console.WriteLine($"Supplier: {supplier}");
+                if (metadata.TryGetValue("sbom.serialNumber", out var serialNumber))
+                    Console.WriteLine($"Serial Number: {serialNumber}");
                 if (metadata.TryGetValue("sbom.componentCount", out var compCount))
                     Console.WriteLine($"Components: {compCount}");
             }

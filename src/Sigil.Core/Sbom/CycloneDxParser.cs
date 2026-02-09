@@ -20,6 +20,7 @@ public static class CycloneDxParser
             return null;
 
         var specVersion = root.TryGetProperty("specVersion", out var sv) ? sv.GetString() ?? "" : "";
+        var serialNumber = root.TryGetProperty("serialNumber", out var sn) ? sn.GetString() : null;
 
         string? name = null;
         string? version = null;
@@ -45,6 +46,6 @@ public static class CycloneDxParser
             componentCount = components.GetArrayLength();
         }
 
-        return new SbomMetadata(SbomFormat.CycloneDx, specVersion, name, version, supplier, componentCount);
+        return new SbomMetadata(SbomFormat.CycloneDx, specVersion, name, version, supplier, componentCount, serialNumber);
     }
 }

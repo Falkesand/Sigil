@@ -8,7 +8,8 @@ public sealed record SbomMetadata(
     string? Name,
     string? Version,
     string? Supplier,
-    int ComponentCount)
+    int ComponentCount,
+    string? SerialNumber)
 {
     public string MediaType => Format switch
     {
@@ -28,6 +29,7 @@ public sealed record SbomMetadata(
         if (Name is not null) dict["sbom.name"] = Name;
         if (Version is not null) dict["sbom.version"] = Version;
         if (Supplier is not null) dict["sbom.supplier"] = Supplier;
+        if (SerialNumber is not null) dict["sbom.serialNumber"] = SerialNumber;
         return dict;
     }
 }

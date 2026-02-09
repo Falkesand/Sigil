@@ -202,6 +202,7 @@ Spec Version: 1.6
 Name: my-app
 Version: 3.0.0
 Supplier: Acme Corp
+Serial Number: urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79
 Components: 3
   [VERIFIED] sha256:c017446b9040d...
 
@@ -367,6 +368,7 @@ The `.sig.json` envelope is a self-contained, detached signature:
       "sbom.name": "my-app",
       "sbom.version": "3.0.0",
       "sbom.supplier": "Acme Corp",
+      "sbom.serialNumber": "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
       "sbom.componentCount": "3"
     }
   },
