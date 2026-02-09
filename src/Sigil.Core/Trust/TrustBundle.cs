@@ -19,6 +19,9 @@ public sealed class TrustBundle
     [JsonPropertyName("endorsements")]
     public List<Endorsement> Endorsements { get; set; } = [];
 
+    [JsonPropertyName("revocations")]
+    public List<RevocationEntry> Revocations { get; set; } = [];
+
     [JsonPropertyName("signature")]
     public BundleSignature? Signature { get; set; }
 }

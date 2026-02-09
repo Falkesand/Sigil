@@ -130,6 +130,7 @@ public static class VerifyCommand
                             TrustDecision.TrustedViaEndorsement => "TRUSTED",
                             TrustDecision.Expired => "EXPIRED",
                             TrustDecision.ScopeMismatch => "SCOPE_MISMATCH",
+                            TrustDecision.Revoked => "REVOKED",
                             _ => "UNTRUSTED"
                         };
 
@@ -251,27 +252,7 @@ public static class VerifyCommand
             return null;
         }
 
-        if (authority is null)
-        {
-            Console.Error.WriteLine("--authority is required when using --trust-bundle.");
-            return null;
-        }
-
         var bundleJson = File.ReadAllText(trustBundlePath);
-
-        // Verify bundle signature against authority
-        var verifyResult = BundleSigner.Verify(bundleJson, authority);
-        if (!verifyResult.IsSuccess)
-        {
-            Console.Error.WriteLine($"Trust bundle verification failed: {verifyResult.ErrorMessage}");
-            return null;
-        }
-
-        if (!verifyResult.Value)
-        {
-            Console.Error.WriteLine("Trust bundle signature is invalid.");
-            return null;
-        }
 
         var deserializeResult = BundleSigner.Deserialize(bundleJson);
         if (!deserializeResult.IsSuccess)
@@ -280,7 +261,32 @@ public static class VerifyCommand
             return null;
         }
 
-        return TrustEvaluator.Evaluate(verification, deserializeResult.Value, artifactName);
+        var bundle = deserializeResult.Value;
+
+        // When authority is provided, verify bundle signature
+        if (authority is not null)
+        {
+            var verifyResult = BundleSigner.Verify(bundleJson, authority);
+            if (!verifyResult.IsSuccess)
+            {
+                Console.Error.WriteLine($"Trust bundle verification failed: {verifyResult.ErrorMessage}");
+                return null;
+            }
+
+            if (!verifyResult.Value)
+            {
+                Console.Error.WriteLine("Trust bundle signature is invalid.");
+                return null;
+            }
+        }
+        else if (bundle.Signature is not null)
+        {
+            // Bundle is signed but no authority specified — require authority
+            Console.Error.WriteLine("--authority is required when using --trust-bundle with a signed bundle.");
+            return null;
+        }
+
+        return TrustEvaluator.Evaluate(verification, bundle, artifactName);
     }
 
     private static void EvaluatePolicy(

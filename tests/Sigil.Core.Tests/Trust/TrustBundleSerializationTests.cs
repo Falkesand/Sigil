@@ -155,6 +155,54 @@ public class TrustBundleSerializationTests
         Assert.Equal(5, (int)TrustDecision.BundleInvalid);
     }
 
+    [Fact]
+    public void Round_trip_bundle_with_revocations()
+    {
+        var bundle = new TrustBundle
+        {
+            Metadata = new BundleMetadata { Name = "revoke-test", Created = "2026-02-09T12:00:00Z" },
+            Keys = [new TrustedKeyEntry { Fingerprint = "sha256:abc123" }],
+            Revocations =
+            [
+                new RevocationEntry
+                {
+                    Fingerprint = "sha256:revoked1",
+                    RevokedAt = "2026-02-09T10:00:00Z",
+                    Reason = "Key compromised"
+                }
+            ]
+        };
+
+        var json = JsonSerializer.Serialize(bundle, JsonOptions);
+        var deserialized = JsonSerializer.Deserialize<TrustBundle>(json, JsonOptions);
+
+        Assert.NotNull(deserialized);
+        Assert.Single(deserialized.Revocations);
+        Assert.Equal("sha256:revoked1", deserialized.Revocations[0].Fingerprint);
+        Assert.Equal("Key compromised", deserialized.Revocations[0].Reason);
+    }
+
+    [Fact]
+    public void Bundle_without_revocations_has_empty_list()
+    {
+        var bundle = new TrustBundle
+        {
+            Metadata = new BundleMetadata { Name = "no-revocations", Created = "2026-02-09T12:00:00Z" }
+        };
+
+        var json = JsonSerializer.Serialize(bundle, JsonOptions);
+        var deserialized = JsonSerializer.Deserialize<TrustBundle>(json, JsonOptions);
+
+        Assert.NotNull(deserialized);
+        Assert.Empty(deserialized.Revocations);
+    }
+
+    [Fact]
+    public void TrustDecision_Revoked_has_expected_value()
+    {
+        Assert.Equal(6, (int)TrustDecision.Revoked);
+    }
+
     private static TrustBundle CreateFullBundle() => new()
     {
         Metadata = new BundleMetadata
