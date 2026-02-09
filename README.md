@@ -16,6 +16,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Sign with a hardware token](#sign-with-a-hardware-token)
   - [Add a timestamp](#add-a-timestamp)
   - [Create an attestation](#create-an-attestation)
+  - [Verify with a policy](#verify-with-a-policy)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -54,6 +55,13 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [DNS TXT records](#dns-txt-records)
   - [Git repositories](#git-repositories)
   - [Verify with discovery](#verify-with-discovery)
+- [Policies](#policies)
+  - [The problem policies solve](#the-problem-policies-solve)
+  - [Creating a policy](#creating-a-policy)
+  - [Verifying with a policy](#verifying-with-a-policy)
+  - [Policy rules](#policy-rules)
+  - [Policies with attestations](#policies-with-attestations)
+  - [Policy format](#policy-format)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -295,6 +303,36 @@ All signatures VERIFIED.
 ```
 
 See [Attestations](#attestations) for details.
+
+### Verify with a policy
+
+Policies let you enforce organizational rules on top of verification — require multiple signatures, mandatory timestamps, approved algorithms, and more:
+
+```json
+{
+  "version": "1.0",
+  "rules": [
+    { "require": "min-signatures", "count": 2 },
+    { "require": "timestamp" },
+    { "require": "algorithm", "allowed": ["ecdsa-p256", "ecdsa-p384"] }
+  ]
+}
+```
+
+```
+sigil verify release.tar.gz --policy policy.json
+```
+
+```
+Policy Evaluation:
+  [PASS] min-signatures: 2 valid signature(s) meet minimum of 2.
+  [PASS] timestamp: All valid signatures have verified timestamps.
+  [PASS] algorithm: All valid signatures use approved algorithms.
+
+All policy rules PASSED.
+```
+
+See [Policies](#policies) for details.
 
 ## Ephemeral vs persistent vs vault
 
@@ -1004,6 +1042,166 @@ The `--discover` option supports all three schemes:
 | `dns:example.com` | DNS TXT lookup |
 | `git:https://github.com/org/repo.git` | Git clone |
 
+## Policies
+
+Trust bundles answer "is this key trusted?" but can't express richer organizational rules. Policies add declarative verification rules that go beyond trust — requiring multiple signatures, mandatory timestamps, approved algorithms, specific labels, or particular signing keys.
+
+A policy is a JSON file with a list of rules. All rules are evaluated (no short-circuit), so you always see a complete pass/fail report.
+
+### The problem policies solve
+
+Without a policy, `sigil verify` answers:
+
+> "Is the signature cryptographically valid (and optionally trusted)?"
+
+With a policy, it answers:
+
+> "Does this signature meet all of my organization's requirements?"
+
+For example: "At least 2 signatures, all timestamped, all using approved algorithms, and at least one from a trusted key in our CI bundle."
+
+### Creating a policy
+
+Create a JSON file with your verification rules:
+
+```json
+{
+  "version": "1.0",
+  "rules": [
+    { "require": "min-signatures", "count": 2 },
+    { "require": "timestamp" },
+    { "require": "algorithm", "allowed": ["ecdsa-p256", "ecdsa-p384"] },
+    { "require": "label", "match": "ci-*" },
+    { "require": "trusted", "bundle": "trust.json" }
+  ]
+}
+```
+
+Save this as `policy.json` next to your trust bundle.
+
+### Verifying with a policy
+
+Pass `--policy` to `sigil verify`:
+
+```
+sigil verify release.tar.gz --policy policy.json
+```
+
+```
+Artifact: release.tar.gz
+Digests: MATCH
+  [VERIFIED] sha256:a1b2c3... (ci-pipeline)
+  [VERIFIED] sha256:d4e5f6... (security-review)
+
+Policy Evaluation:
+  [PASS] min-signatures: 2 valid signature(s) meet minimum of 2.
+  [PASS] timestamp: All valid signatures have verified timestamps.
+  [PASS] algorithm: All valid signatures use approved algorithms.
+  [PASS] label: Found signature with label matching 'ci-*'.
+  [PASS] trusted: At least one signature is trusted by the bundle.
+
+All policy rules PASSED.
+```
+
+If any rule fails:
+
+```
+Policy Evaluation:
+  [PASS] min-signatures: 2 valid signature(s) meet minimum of 2.
+  [FAIL] timestamp: One or more valid signatures are missing a verified timestamp.
+  [PASS] algorithm: All valid signatures use approved algorithms.
+
+Policy evaluation FAILED.
+```
+
+`--policy` is mutually exclusive with `--trust-bundle` and `--discover`. The policy's `trusted` rule handles trust internally — it loads and verifies the bundle itself.
+
+### Policy rules
+
+| Rule | Purpose | Required fields |
+|------|---------|-----------------|
+| `min-signatures` | Require N valid signatures | `count` (>= 1) |
+| `timestamp` | All valid signatures must have a verified RFC 3161 timestamp | — |
+| `sbom-metadata` | Signature must include SBOM metadata (CycloneDX or SPDX) | — |
+| `algorithm` | All signatures must use an approved algorithm | `allowed` (list) |
+| `label` | At least one signature must have a label matching a glob pattern | `match` (glob) |
+| `trusted` | At least one signature must be trusted by a trust bundle | `bundle` (relative path) |
+| `key` | At least one signature must be from a specific key | `fingerprints` (list) |
+
+**min-signatures** — Requires at least N cryptographically valid signatures:
+
+```json
+{ "require": "min-signatures", "count": 2 }
+```
+
+**timestamp** — All valid signatures must have verified RFC 3161 timestamps:
+
+```json
+{ "require": "timestamp" }
+```
+
+**sbom-metadata** — The signature must include SBOM metadata (only applies to regular signatures, not attestations):
+
+```json
+{ "require": "sbom-metadata" }
+```
+
+**algorithm** — All valid signatures must use one of the listed algorithms (case-insensitive):
+
+```json
+{ "require": "algorithm", "allowed": ["ecdsa-p256", "ecdsa-p384"] }
+```
+
+**label** — At least one valid signature must have a label matching the glob pattern (`*` and `?` wildcards):
+
+```json
+{ "require": "label", "match": "ci-*" }
+```
+
+**trusted** — Loads a trust bundle (path relative to the policy file) and checks that at least one signature is trusted. Optionally specify the authority fingerprint:
+
+```json
+{ "require": "trusted", "bundle": "trust.json" }
+{ "require": "trusted", "bundle": "trust.json", "authority": "sha256:def456..." }
+```
+
+If `authority` is omitted and the bundle is signed, the authority is auto-extracted from the bundle's signature.
+
+**key** — At least one valid signature must be from one of the listed key fingerprints:
+
+```json
+{ "require": "key", "fingerprints": ["sha256:abc123...", "sha256:def456..."] }
+```
+
+### Policies with attestations
+
+Policies work with attestations too:
+
+```
+sigil verify-attestation release.tar.gz --policy policy.json
+```
+
+Most rules work identically for attestations. The exception is `sbom-metadata`, which only applies to regular signatures (SBOM metadata lives in the `SignatureEnvelope.Subject.Metadata`, not in DSSE envelopes). If a policy includes `sbom-metadata` and is used with `verify-attestation`, that rule will fail with a clear message.
+
+### Policy format
+
+```json
+{
+  "version": "1.0",
+  "rules": [
+    { "require": "min-signatures", "count": 2 },
+    { "require": "timestamp" },
+    { "require": "sbom-metadata" },
+    { "require": "algorithm", "allowed": ["ecdsa-p256", "ecdsa-p384"] },
+    { "require": "label", "match": "ci-*" },
+    { "require": "trusted", "bundle": "trust.json", "authority": "sha256:def456..." },
+    { "require": "key", "fingerprints": ["sha256:abc123..."] }
+  ]
+}
+```
+
+Only version `1.0` is supported. Each rule must have a `require` field identifying the rule type. Fields that don't apply to a rule type are ignored. Validation rejects unknown rule types, missing required fields, and empty lists.
+
 ## Vault-backed signing
 
 When private keys must never leave a hardware security module or cloud KMS, Sigil delegates signing to the vault. The private key is never exposed to the signing tool — Sigil sends data to the vault or hardware token, receives the signature, and embeds it in the envelope. Authentication uses environment variables — no hardcoded secrets. All vault API calls have a 30-second timeout.
@@ -1237,9 +1435,9 @@ sigil trust sign trust.json --vault pkcs11 --vault-key "pkcs11:token=YubiKey;obj
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
 sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
-sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri]
+sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil attest <file> --predicate <json> --type <type> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
-sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri]
+sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil timestamp <envelope> --tsa <tsa-url> [--index <n>]
 sigil trust create --name <name> [-o path] [--description "text"]
 sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
@@ -1281,6 +1479,7 @@ sigil discover git <url> [-o path]
 - Default attestation path is `<file>.att.json`; override with `--attestation`
 - `--type` filters by predicate type — rejects attestations with a different type
 - `--trust-bundle` and `--discover` enable trust evaluation (same as `verify`)
+- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
 
 **timestamp**: Apply RFC 3161 timestamp tokens to an existing signature envelope.
 - `--tsa` is required — the URL of the Timestamp Authority
@@ -1293,6 +1492,7 @@ sigil discover git <url> [-o path]
 - SBOM metadata is displayed when present in the envelope
 - `--trust-bundle` and `--authority` enable trust evaluation on top of crypto verification
 - `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
+- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
 - When using `--discover`, authority is auto-extracted from the bundle's signature if `--authority` is omitted
 
 **trust create**: Create an empty unsigned trust bundle.
@@ -1404,6 +1604,13 @@ dotnet sigil verify-attestation release.tar.gz
 dotnet sigil verify-attestation release.tar.gz --type slsa-provenance-v1 --trust-bundle trust-signed.json --authority sha256:def456...
 ```
 
+**Policies:**
+
+```
+dotnet sigil verify release.tar.gz --policy policy.json
+dotnet sigil verify-attestation release.tar.gz --policy policy.json
+```
+
 **Discovery:**
 
 ```
@@ -1426,14 +1633,13 @@ A typical GitHub Actions workflow using the local tool:
 
 - run: dotnet sigil attest my-app.tar.gz --predicate provenance.json --type slsa-provenance-v1 --key ${{ runner.temp }}/signing-key.pem
 
-- run: dotnet sigil verify my-app.tar.gz
+- run: dotnet sigil verify my-app.tar.gz --policy policy.json
 
-- run: dotnet sigil verify-attestation my-app.tar.gz --type slsa-provenance-v1
+- run: dotnet sigil verify-attestation my-app.tar.gz --type slsa-provenance-v1 --policy policy.json
 ```
 
 ## What's coming
 
-- **Policy engine** — Declarative verification rules (min signatures, required timestamps, algorithm restrictions).
 - **Transparency log** — Append-only Merkle tree log for auditable signing events.
 - **Git commit signing** — Drop-in replacement for GPG via `gpg.program` / `gpg.format`.
 - **Container/OCI signing** — Sign container images in OCI registries using the referrers API.
