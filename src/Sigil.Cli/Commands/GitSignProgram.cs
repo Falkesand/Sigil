@@ -1,10 +1,12 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Sigil.Cli.Vault;
 using Sigil.Crypto;
 using Sigil.Git;
 using Sigil.Keys;
 using Sigil.Signing;
+using Sigil.Vault;
 
 namespace Sigil.Cli.Commands;
 
@@ -29,14 +31,27 @@ public static class GitSignProgram
     /// Runs the git-sign program with the given arguments (after "git-sign").
     /// Returns the process exit code.
     /// </summary>
-    public static int Run(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
+    public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
         // Parse args after "git-sign"
         var parsed = ParseArgs(args.AsSpan(1));
 
-        if (parsed.KeyPath is null)
+        // Validate mutual exclusivity: --key vs --vault/--vault-key
+        if (parsed.KeyPath is not null && parsed.VaultName is not null)
         {
-            stderr.WriteLine("Error: --key is required for git-sign.");
+            stderr.WriteLine("Error: Cannot use both --key and --vault. Choose one signing method.");
+            return 1;
+        }
+
+        if (parsed.VaultName is not null && parsed.VaultKey is null)
+        {
+            stderr.WriteLine("Error: --vault-key is required when using --vault.");
+            return 1;
+        }
+
+        if (parsed.VaultKey is not null && parsed.VaultName is null)
+        {
+            stderr.WriteLine("Error: --vault is required when using --vault-key.");
             return 1;
         }
 
@@ -45,10 +60,16 @@ public static class GitSignProgram
             return RunVerify(parsed, stdin, stdout, stderr);
         }
 
-        return RunSign(parsed, stdin, stdout, stderr);
+        if (parsed.KeyPath is null && parsed.VaultName is null)
+        {
+            stderr.WriteLine("Error: --key or --vault/--vault-key required for git-sign.");
+            return 1;
+        }
+
+        return await RunSignAsync(parsed, stdin, stdout, stderr);
     }
 
-    private static int RunSign(ParsedArgs parsed, TextReader stdin, TextWriter stdout, TextWriter stderr)
+    private static async Task<int> RunSignAsync(ParsedArgs parsed, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
         // Read commit/tag content from stdin
         var content = stdin.ReadToEnd();
@@ -60,71 +81,113 @@ public static class GitSignProgram
 
         var contentBytes = Encoding.UTF8.GetBytes(content);
 
-        // Load signer from PEM
-        var loadResult = PemSignerLoader.Load(parsed.KeyPath!, parsed.Passphrase, null);
-        if (!loadResult.IsSuccess)
+        ISigner? signer = null;
+        IKeyProvider? provider = null;
+
+        try
         {
-            stderr.WriteLine($"Error: {loadResult.ErrorMessage}");
-            return 1;
-        }
-
-        using var signer = loadResult.Value;
-        var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
-        var algorithm = signer.Algorithm.ToCanonicalName();
-        var now = DateTimeOffset.UtcNow;
-        var timestamp = now.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
-
-        // Compute digests
-        var (sha256, sha512) = HashAlgorithms.ComputeDigests(contentBytes);
-
-        // Build subject
-        var subject = new SubjectDescriptor
-        {
-            Name = "git-object",
-            Digests = new Dictionary<string, string>
+            if (parsed.VaultName is not null)
             {
-                ["sha256"] = sha256,
-                ["sha512"] = sha512
+                // Vault path
+                var createResult = VaultProviderFactory.Create(parsed.VaultName);
+                if (!createResult.IsSuccess)
+                {
+                    stderr.WriteLine($"Error: {createResult.ErrorMessage}");
+                    return 1;
+                }
+
+                provider = createResult.Value;
+
+                var signerResult = await provider.GetSignerAsync(parsed.VaultKey!);
+                if (!signerResult.IsSuccess)
+                {
+                    stderr.WriteLine($"Error: {signerResult.ErrorMessage}");
+                    return 1;
+                }
+
+                signer = signerResult.Value;
             }
-        };
+            else
+            {
+                // PEM path — resolve passphrase from arg or SIGIL_PASSPHRASE env var
+                var passphrase = parsed.Passphrase
+                    ?? Environment.GetEnvironmentVariable("SIGIL_PASSPHRASE");
 
-        // Build signing payload
-        var version = "1.0";
-        var payload = ArtifactSigner.BuildSigningPayload(
-            subject, contentBytes, version,
-            fingerprint.Value, algorithm, timestamp, null);
+                var loadResult = PemSignerLoader.Load(parsed.KeyPath!, passphrase, null);
+                if (!loadResult.IsSuccess)
+                {
+                    stderr.WriteLine($"Error: {loadResult.ErrorMessage}");
+                    return 1;
+                }
 
-        // Sign
-        var signatureBytes = signer.Sign(payload);
+                signer = loadResult.Value;
+            }
 
-        // Build envelope
-        var entry = new SignatureEntry
+            var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
+            var algorithm = signer.Algorithm.ToCanonicalName();
+            var now = DateTimeOffset.UtcNow;
+            var timestamp = now.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+
+            // Compute digests
+            var (sha256, sha512) = HashAlgorithms.ComputeDigests(contentBytes);
+
+            // Build subject
+            var subject = new SubjectDescriptor
+            {
+                Name = "git-object",
+                Digests = new Dictionary<string, string>
+                {
+                    ["sha256"] = sha256,
+                    ["sha512"] = sha512
+                }
+            };
+
+            // Build signing payload
+            var version = "1.0";
+            var payload = ArtifactSigner.BuildSigningPayload(
+                subject, contentBytes, version,
+                fingerprint.Value, algorithm, timestamp, null);
+
+            // Sign (async for vault, DIM delegates to sync for local)
+            var signatureBytes = await signer.SignAsync(payload);
+
+            // Build envelope
+            var entry = new SignatureEntry
+            {
+                KeyId = fingerprint.Value,
+                Algorithm = algorithm,
+                PublicKey = Convert.ToBase64String(signer.PublicKey),
+                Value = Convert.ToBase64String(signatureBytes),
+                Timestamp = timestamp
+            };
+
+            var envelope = new SignatureEnvelope
+            {
+                Subject = subject,
+                Signatures = [entry]
+            };
+
+            // Serialize and armor
+            var json = ArtifactSigner.Serialize(envelope);
+            var armored = GitSignatureArmor.Wrap(json);
+
+            // Write armored signature to stdout
+            stdout.Write(armored);
+
+            // Write GPG status to status-fd
+            var statusWriter = GetStatusWriter(parsed.StatusFd, stdout, stderr);
+            statusWriter.WriteLine(GpgStatusEmitter.SigCreated(algorithm, fingerprint.Value, now));
+
+            return 0;
+        }
+        finally
         {
-            KeyId = fingerprint.Value,
-            Algorithm = algorithm,
-            PublicKey = Convert.ToBase64String(signer.PublicKey),
-            Value = Convert.ToBase64String(signatureBytes),
-            Timestamp = timestamp
-        };
+            if (signer is IDisposable disposableSigner)
+                disposableSigner.Dispose();
 
-        var envelope = new SignatureEnvelope
-        {
-            Subject = subject,
-            Signatures = [entry]
-        };
-
-        // Serialize and armor
-        var json = ArtifactSigner.Serialize(envelope);
-        var armored = GitSignatureArmor.Wrap(json);
-
-        // Write armored signature to stdout
-        stdout.Write(armored);
-
-        // Write GPG status to status-fd
-        var statusWriter = GetStatusWriter(parsed.StatusFd, stdout, stderr);
-        statusWriter.WriteLine(GpgStatusEmitter.SigCreated(algorithm, fingerprint.Value, now));
-
-        return 0;
+            if (provider is IAsyncDisposable asyncDisposableProvider)
+                await asyncDisposableProvider.DisposeAsync();
+        }
     }
 
     private static int RunVerify(ParsedArgs parsed, TextReader stdin, TextWriter stdout, TextWriter stderr)
@@ -206,6 +269,8 @@ public static class GitSignProgram
         string? keyPath = null;
         string? passphrase = null;
         string? verifyFile = null;
+        string? vaultName = null;
+        string? vaultKey = null;
         int statusFd = 2;
 
         for (int i = 0; i < args.Length; i++)
@@ -228,6 +293,22 @@ public static class GitSignProgram
             {
                 passphrase = args[++i];
             }
+            else if (arg.StartsWith("--vault=", StringComparison.OrdinalIgnoreCase))
+            {
+                vaultName = arg["--vault=".Length..];
+            }
+            else if (string.Equals(arg, "--vault", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                vaultName = args[++i];
+            }
+            else if (arg.StartsWith("--vault-key=", StringComparison.OrdinalIgnoreCase))
+            {
+                vaultKey = arg["--vault-key=".Length..];
+            }
+            else if (string.Equals(arg, "--vault-key", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                vaultKey = args[++i];
+            }
             else if (arg.StartsWith("--status-fd=", StringComparison.OrdinalIgnoreCase))
             {
                 if (int.TryParse(arg["--status-fd=".Length..], CultureInfo.InvariantCulture, out var fd))
@@ -240,12 +321,14 @@ public static class GitSignProgram
             // Ignore GPG-compat args: -bsau, -b, -s, -a, -u, and their values
         }
 
-        return new ParsedArgs(keyPath, passphrase, verifyFile, statusFd);
+        return new ParsedArgs(keyPath, passphrase, verifyFile, statusFd, vaultName, vaultKey);
     }
 
     private sealed record ParsedArgs(
         string? KeyPath,
         string? Passphrase,
         string? VerifyFile,
-        int StatusFd);
+        int StatusFd,
+        string? VaultName,
+        string? VaultKey);
 }

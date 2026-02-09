@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Sigil.Cli.Vault;
 using Sigil.Keys;
 
 namespace Sigil.Cli.Commands;
@@ -9,50 +10,114 @@ public static class GitConfigCommand
 {
     public static Command Create()
     {
-        var keyOption = new Option<string>("--key") { Description = "Path to a private key PEM file" };
-        keyOption.Required = true;
+        var keyOption = new Option<string?>("--key") { Description = "Path to a private key PEM file" };
         var globalOption = new Option<bool>("--global") { Description = "Set git config globally (also enables commit.gpgsign)" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the signing key is encrypted" };
+        var vaultOption = new Option<string?>("--vault") { Description = "Vault provider (hashicorp, azure, aws, gcp, pkcs11)" };
+        var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Key reference in the vault provider" };
 
         var cmd = new Command("config", "Configure git to use Sigil for commit/tag signing");
         cmd.Add(keyOption);
         cmd.Add(globalOption);
         cmd.Add(passphraseOption);
+        cmd.Add(vaultOption);
+        cmd.Add(vaultKeyOption);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
-            var keyPath = parseResult.GetValue(keyOption)!;
+            var keyPath = parseResult.GetValue(keyOption);
             var isGlobal = parseResult.GetValue(globalOption);
             var passphrase = parseResult.GetValue(passphraseOption);
+            var vaultName = parseResult.GetValue(vaultOption);
+            var vaultKey = parseResult.GetValue(vaultKeyOption);
 
-            var fullKeyPath = Path.GetFullPath(keyPath);
-
-            // Validate key exists and can be loaded
-            var loadResult = PemSignerLoader.Load(fullKeyPath, passphrase, null);
-            if (!loadResult.IsSuccess)
+            // Validate mutual exclusivity
+            if (keyPath is not null && vaultName is not null)
             {
-                Console.Error.WriteLine(loadResult.ErrorMessage);
+                Console.Error.WriteLine("Cannot use both --key and --vault. Choose one signing method.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (vaultName is not null && vaultKey is null)
+            {
+                Console.Error.WriteLine("--vault-key is required when using --vault.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (vaultKey is not null && vaultName is null)
+            {
+                Console.Error.WriteLine("--vault is required when using --vault-key.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (keyPath is null && vaultName is null)
+            {
+                Console.Error.WriteLine("--key or --vault/--vault-key is required.");
                 Environment.ExitCode = 1;
                 return;
             }
 
             string fingerprint;
-            using (var signer = loadResult.Value)
+            string wrapperPath;
+
+            if (vaultName is not null)
             {
-                fingerprint = KeyFingerprint.Compute(signer.PublicKey).Value;
+                // Vault path — resolve fingerprint from vault public key
+                var createResult = VaultProviderFactory.Create(vaultName);
+                if (!createResult.IsSuccess)
+                {
+                    Console.Error.WriteLine(createResult.ErrorMessage);
+                    Environment.ExitCode = 1;
+                    return;
+                }
+
+                await using var provider = createResult.Value;
+
+                var pubKeyResult = await provider.GetPublicKeyAsync(vaultKey!);
+                if (!pubKeyResult.IsSuccess)
+                {
+                    Console.Error.WriteLine(pubKeyResult.ErrorMessage);
+                    Environment.ExitCode = 1;
+                    return;
+                }
+
+                fingerprint = KeyFingerprint.Compute(pubKeyResult.Value).Value;
+
+                // Generate vault wrapper script
+                var sigilPath = FindSigilExecutable();
+                wrapperPath = GenerateVaultWrapper(sigilPath, vaultName, vaultKey!);
             }
-
-            // Find sigil executable path
-            var sigilPath = FindSigilExecutable();
-
-            // Generate wrapper script
-            var wrapperPath = GenerateWrapper(sigilPath, fullKeyPath, passphrase);
-
-            if (passphrase is not null)
+            else
             {
-                Console.Error.WriteLine("Warning: Passphrase is stored in plaintext in the wrapper script.");
-                Console.Error.WriteLine($"  File: {wrapperPath}");
-                Console.Error.WriteLine("  Consider using an unencrypted key or SIGIL_PASSPHRASE environment variable.");
+                // PEM path
+                var fullKeyPath = Path.GetFullPath(keyPath!);
+
+                var loadResult = PemSignerLoader.Load(fullKeyPath, passphrase, null);
+                if (!loadResult.IsSuccess)
+                {
+                    Console.Error.WriteLine(loadResult.ErrorMessage);
+                    Environment.ExitCode = 1;
+                    return;
+                }
+
+                using (var signer = loadResult.Value)
+                {
+                    fingerprint = KeyFingerprint.Compute(signer.PublicKey).Value;
+                }
+
+                // Generate PEM wrapper script
+                var sigilPath = FindSigilExecutable();
+                wrapperPath = GenerateWrapper(sigilPath, fullKeyPath, passphrase);
+
+                if (passphrase is not null)
+                {
+                    Console.Error.WriteLine("Warning: Passphrase is stored in plaintext in the wrapper script.");
+                    Console.Error.WriteLine($"  File: {wrapperPath}");
+                    Console.Error.WriteLine("  Consider using SIGIL_PASSPHRASE environment variable instead.");
+                }
             }
 
             // Configure git
@@ -115,26 +180,57 @@ public static class GitConfigCommand
             var content = $"#!/bin/sh\nexec \"{sigilPath}\" git-sign --key \"{keyPath}\"{passphraseArg} \"$@\"\n";
             File.WriteAllText(wrapperPath, content);
 
-            // Make executable
-            try
-            {
-                var chmodPsi = new ProcessStartInfo("chmod")
-                {
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-                chmodPsi.ArgumentList.Add("+x");
-                chmodPsi.ArgumentList.Add(wrapperPath);
-                using var chmod = Process.Start(chmodPsi);
-                chmod?.WaitForExit(5000);
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                // chmod may not be available on all systems (e.g., Windows)
-            }
+            MakeExecutable(wrapperPath);
 
             return wrapperPath;
+        }
+    }
+
+    private static string GenerateVaultWrapper(string sigilPath, string vaultName, string vaultKey)
+    {
+        var sigilDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".sigil");
+        Directory.CreateDirectory(sigilDir);
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var wrapperPath = Path.Combine(sigilDir, "git-sign.bat");
+            var escapedKey = EscapeBatchPassphrase(vaultKey);
+            var content = $"@\"{sigilPath}\" git-sign --vault \"{vaultName}\" --vault-key \"{escapedKey}\" %*\r\n";
+            File.WriteAllText(wrapperPath, content);
+            return wrapperPath;
+        }
+        else
+        {
+            var wrapperPath = Path.Combine(sigilDir, "git-sign.sh");
+            var escapedKey = EscapeShellPassphrase(vaultKey);
+            var content = $"#!/bin/sh\nexec \"{sigilPath}\" git-sign --vault \"{vaultName}\" --vault-key '{escapedKey}' \"$@\"\n";
+            File.WriteAllText(wrapperPath, content);
+
+            MakeExecutable(wrapperPath);
+
+            return wrapperPath;
+        }
+    }
+
+    private static void MakeExecutable(string path)
+    {
+        try
+        {
+            var chmodPsi = new ProcessStartInfo("chmod")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            chmodPsi.ArgumentList.Add("+x");
+            chmodPsi.ArgumentList.Add(path);
+            using var chmod = Process.Start(chmodPsi);
+            chmod?.WaitForExit(5000);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // chmod may not be available on all systems (e.g., Windows)
         }
     }
 

@@ -78,4 +78,31 @@ public class GitConfigCommandTests : IDisposable
         Assert.Contains("Scope: local", result.StdOut);
         Assert.Contains("Tip:", result.StdOut);
     }
+
+    [Fact]
+    public async Task Config_vault_and_key_mutually_exclusive()
+    {
+        var keyPath = GenerateKeyFile();
+
+        var result = await CommandTestHelper.InvokeAsync(
+            "git", "config", "--key", keyPath, "--vault", "hashicorp", "--vault-key", "transit/key");
+
+        Assert.Contains("Cannot use both --key and --vault", result.StdErr);
+    }
+
+    [Fact]
+    public async Task Config_vault_requires_vault_key()
+    {
+        var result = await CommandTestHelper.InvokeAsync("git", "config", "--vault", "hashicorp");
+
+        Assert.Contains("--vault-key is required", result.StdErr);
+    }
+
+    [Fact]
+    public async Task Config_requires_key_or_vault()
+    {
+        var result = await CommandTestHelper.InvokeAsync("git", "config");
+
+        Assert.Contains("--key or --vault/--vault-key is required", result.StdErr);
+    }
 }

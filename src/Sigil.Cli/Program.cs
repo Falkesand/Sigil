@@ -5,7 +5,7 @@ using System.CommandLine;
 // that don't conform to System.CommandLine conventions.
 if (GitSignProgram.ShouldIntercept(args))
 {
-    return GitSignProgram.Run(args, Console.In, Console.Out, Console.Error);
+    return await GitSignProgram.RunAsync(args, Console.In, Console.Out, Console.Error);
 }
 
 var rootCommand = new RootCommand("Sign and verify software artifacts with distributed trust");

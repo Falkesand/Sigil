@@ -29,14 +29,14 @@ public class GitSignProgramVerifyTests : IDisposable
         return pemPath;
     }
 
-    private static (string armored, string commitContent) SignCommit(string keyPath)
+    private static async Task<(string armored, string commitContent)> SignCommitAsync(string keyPath)
     {
         var commitContent = "tree abc123\nauthor Test <test@example.com>\n\nTest commit\n";
         var stdin = new StringReader(commitContent);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        GitSignProgram.Run(
+        await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath, "--status-fd=2"],
             stdin, stdout, stderr);
 
@@ -44,10 +44,10 @@ public class GitSignProgramVerifyTests : IDisposable
     }
 
     [Fact]
-    public void Verify_valid_signature_emits_GOODSIG()
+    public async Task Verify_valid_signature_emits_GOODSIG()
     {
         var keyPath = GenerateKeyFile();
-        var (armored, commitContent) = SignCommit(keyPath);
+        var (armored, commitContent) = await SignCommitAsync(keyPath);
 
         var sigFile = Path.Combine(_tempDir, "sig.tmp");
         File.WriteAllText(sigFile, armored);
@@ -56,7 +56,7 @@ public class GitSignProgramVerifyTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath, "--status-fd=1", "--verify", sigFile, "-"],
             stdin, stdout, stderr);
 
@@ -68,10 +68,10 @@ public class GitSignProgramVerifyTests : IDisposable
     }
 
     [Fact]
-    public void Verify_tampered_content_emits_BADSIG()
+    public async Task Verify_tampered_content_emits_BADSIG()
     {
         var keyPath = GenerateKeyFile();
-        var (armored, _) = SignCommit(keyPath);
+        var (armored, _) = await SignCommitAsync(keyPath);
 
         var sigFile = Path.Combine(_tempDir, "sig.tmp");
         File.WriteAllText(sigFile, armored);
@@ -81,7 +81,7 @@ public class GitSignProgramVerifyTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath, "--status-fd=1", "--verify", sigFile, "-"],
             stdin, stdout, stderr);
 
@@ -90,7 +90,7 @@ public class GitSignProgramVerifyTests : IDisposable
     }
 
     [Fact]
-    public void Verify_invalid_armor_fails()
+    public async Task Verify_invalid_armor_fails()
     {
         var keyPath = GenerateKeyFile();
         var sigFile = Path.Combine(_tempDir, "bad.sig");
@@ -100,7 +100,7 @@ public class GitSignProgramVerifyTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath, "--verify", sigFile, "-"],
             stdin, stdout, stderr);
 
@@ -109,7 +109,7 @@ public class GitSignProgramVerifyTests : IDisposable
     }
 
     [Fact]
-    public void Verify_missing_sigfile_fails()
+    public async Task Verify_missing_sigfile_fails()
     {
         var keyPath = GenerateKeyFile();
         var nonexistent = Path.Combine(_tempDir, "does-not-exist.sig");
@@ -118,7 +118,7 @@ public class GitSignProgramVerifyTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath, "--verify", nonexistent, "-"],
             stdin, stdout, stderr);
 
@@ -127,10 +127,10 @@ public class GitSignProgramVerifyTests : IDisposable
     }
 
     [Fact]
-    public void Verify_status_fd_2_writes_to_stderr()
+    public async Task Verify_status_fd_2_writes_to_stderr()
     {
         var keyPath = GenerateKeyFile();
-        var (armored, commitContent) = SignCommit(keyPath);
+        var (armored, commitContent) = await SignCommitAsync(keyPath);
 
         var sigFile = Path.Combine(_tempDir, "sig.tmp");
         File.WriteAllText(sigFile, armored);
@@ -139,7 +139,7 @@ public class GitSignProgramVerifyTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath, "--status-fd=2", "--verify", sigFile, "-"],
             stdin, stdout, stderr);
 

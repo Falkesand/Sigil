@@ -31,7 +31,7 @@ public class GitSignProgramSignTests : IDisposable
     }
 
     [Fact]
-    public void Sign_produces_armored_output()
+    public async Task Sign_produces_armored_output()
     {
         var keyPath = GenerateKeyFile();
         var commitContent = "tree abc123\nauthor Test <test@example.com>\n\nInitial commit\n";
@@ -39,7 +39,7 @@ public class GitSignProgramSignTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath, "--status-fd=2", "-bsau", "test@example.com"],
             stdin, stdout, stderr);
 
@@ -50,14 +50,14 @@ public class GitSignProgramSignTests : IDisposable
     }
 
     [Fact]
-    public void Sign_emits_SIG_CREATED_status()
+    public async Task Sign_emits_SIG_CREATED_status()
     {
         var keyPath = GenerateKeyFile();
         var stdin = new StringReader("commit content");
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath, "--status-fd=2", "-bsau", "test@example.com"],
             stdin, stdout, stderr);
 
@@ -66,7 +66,7 @@ public class GitSignProgramSignTests : IDisposable
     }
 
     [Fact]
-    public void Sign_roundtrip_produces_valid_envelope()
+    public async Task Sign_roundtrip_produces_valid_envelope()
     {
         var keyPath = GenerateKeyFile();
         var commitContent = "tree abc123\nauthor Test <test@example.com>\n\nTest commit\n";
@@ -74,7 +74,7 @@ public class GitSignProgramSignTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        GitSignProgram.Run(
+        await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath],
             stdin, stdout, stderr);
 
@@ -89,29 +89,29 @@ public class GitSignProgramSignTests : IDisposable
     }
 
     [Fact]
-    public void Sign_fails_without_key()
+    public async Task Sign_fails_without_key()
     {
         var stdin = new StringReader("commit content");
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--status-fd=2", "-bsau", "test@example.com"],
             stdin, stdout, stderr);
 
         Assert.Equal(1, exitCode);
-        Assert.Contains("--key is required", stderr.ToString());
+        Assert.Contains("--key or --vault/--vault-key required", stderr.ToString());
     }
 
     [Fact]
-    public void Sign_fails_on_empty_stdin()
+    public async Task Sign_fails_on_empty_stdin()
     {
         var keyPath = GenerateKeyFile();
         var stdin = new StringReader("");
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", "--key", keyPath],
             stdin, stdout, stderr);
 
@@ -120,14 +120,14 @@ public class GitSignProgramSignTests : IDisposable
     }
 
     [Fact]
-    public void Sign_with_key_equals_syntax()
+    public async Task Sign_with_key_equals_syntax()
     {
         var keyPath = GenerateKeyFile();
         var stdin = new StringReader("commit content");
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = GitSignProgram.Run(
+        var exitCode = await GitSignProgram.RunAsync(
             ["git-sign", $"--key={keyPath}", "--status-fd=2", "-bsau", "test@example.com"],
             stdin, stdout, stderr);
 
