@@ -21,6 +21,8 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Sign git commits](#sign-git-commits)
   - [Sign a container image](#sign-a-container-image)
   - [Verify a container image](#verify-a-container-image)
+  - [Sign a directory of files](#sign-a-directory-of-files)
+  - [Verify a manifest](#verify-a-manifest)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -91,6 +93,14 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Registry authentication](#registry-authentication)
   - [How container signing works](#how-container-signing-works)
   - [Signature storage format](#signature-storage-format)
+- [Batch/manifest signing](#batchmanifest-signing)
+  - [Sign multiple files](#sign-multiple-files)
+  - [Verify a manifest](#verify-a-manifest-1)
+  - [Filter files with --include](#filter-files-with---include)
+  - [Multiple manifest signatures](#multiple-manifest-signatures)
+  - [Manifests with trust bundles](#manifests-with-trust-bundles)
+  - [How manifest signing works](#how-manifest-signing-works)
+  - [Manifest envelope format](#manifest-envelope-format)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -102,6 +112,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
 Sigil lets you **sign files** and **verify signatures**. That's it.
 
 - Sign a file — Sigil produces a small `.sig.json` file next to it
+- Sign a directory — Sigil produces a single `.manifest.sig.json` covering all files atomically
 - Anyone can verify the file hasn't been tampered with — the public key is embedded in the envelope
 - No key store, no import/export, no hidden state
 
@@ -125,6 +136,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 | SLSA attestations | Yes (DSSE/in-toto) | Yes | No | No |
 | Git commit signing | Yes (GPG drop-in) | No | Yes | No |
 | Container signing | Yes (OCI 1.1 referrers) | Yes (Cosign) | No | No |
+| Batch/manifest signing | Yes (atomic multi-file) | No | No | No |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
 Sigil is for people who want to sign things **without asking permission from a cloud service**.
@@ -454,6 +466,51 @@ All signatures VERIFIED.
 ```
 
 Trust bundles, policies, and discovery all work with container images — same as file signatures. See [Container/OCI image signing](#containeroci-image-signing) for details.
+
+### Sign a directory of files
+
+Sign all files in a directory with a single manifest signature:
+
+```
+sigil sign-manifest ./release/
+```
+
+```
+Manifest signed: 4 files
+Algorithm: ecdsa-p256
+Key: sha256:0ee53f5c...
+Mode: ephemeral (key not persisted)
+Output: release/manifest.sig.json
+```
+
+Use `--include` to filter files by pattern:
+
+```
+sigil sign-manifest ./release/ --include "*.dll" --key mykey.pem
+```
+
+See [Batch/manifest signing](#batchmanifest-signing) for details.
+
+### Verify a manifest
+
+```
+sigil verify-manifest release/manifest.sig.json
+```
+
+```
+Manifest: manifest.sig.json (4 files)
+  [OK] README.md
+  [OK] src/components/Button.cs
+  [OK] src/utils/Format.cs
+  [OK] tests/Test.cs
+
+Signatures:
+  [VERIFIED] sha256:0ee53f5c...
+
+All signatures VERIFIED.
+```
+
+Trust bundles, policies, and discovery all work with manifests — same as file signatures. See [Batch/manifest signing](#batchmanifest-signing) for details.
 
 ## Ephemeral vs persistent vs vault
 
@@ -2161,6 +2218,184 @@ The `config` is the OCI empty descriptor (`{}`, 2 bytes) — required by the spe
 
 **Compatible registries:** Any OCI 1.1-compliant registry that supports the referrers API. This includes GitHub Container Registry (ghcr.io), Docker Hub, Azure Container Registry, Amazon ECR, Google Artifact Registry, and Harbor 2.6+.
 
+## Batch/manifest signing
+
+Sigil signs multiple files in one operation with a shared manifest signature. A single `.manifest.sig.json` file covers every file — adding, removing, reordering, or tampering with any file invalidates the signature.
+
+Zero new dependencies — reuses existing signing, verification, and trust infrastructure.
+
+### Sign multiple files
+
+Sign all files in a directory:
+
+```
+sigil sign-manifest ./release/ --key mykey.pem
+```
+
+```
+Manifest signed: 4 files
+Algorithm: ecdsa-p256
+Key: sha256:c017446b...
+Mode: persistent key
+Output: release/manifest.sig.json
+```
+
+All signing modes work — ephemeral, persistent, vault, and PKCS#11:
+
+```
+sigil sign-manifest ./release/
+sigil sign-manifest ./release/ --key mykey.pem
+sigil sign-manifest ./release/ --vault aws --vault-key alias/ci-key
+sigil sign-manifest ./release/ --vault pkcs11 --vault-key "pkcs11:token=YubiKey;object=my-key"
+```
+
+Add a label and timestamp:
+
+```
+sigil sign-manifest ./release/ --key mykey.pem --label "ci-build" --timestamp http://timestamp.digicert.com
+```
+
+Specify a custom output path:
+
+```
+sigil sign-manifest ./release/ --key mykey.pem --output dist/manifest.sig.json
+```
+
+### Verify a manifest
+
+```
+sigil verify-manifest release/manifest.sig.json
+```
+
+```
+Manifest: manifest.sig.json (4 files)
+  [OK] README.md
+  [OK] src/components/Button.cs
+  [OK] src/utils/Format.cs
+  [OK] tests/Test.cs
+
+Signatures:
+  [VERIFIED] sha256:c017446b...
+
+All signatures VERIFIED.
+```
+
+Default base path is the manifest file's directory. Override with `--base-path`:
+
+```
+sigil verify-manifest manifest.sig.json --base-path ./release/
+```
+
+If any file has been tampered with:
+
+```
+Manifest: manifest.sig.json (4 files)
+  [OK] README.md
+  [FAIL] src/components/Button.cs — Digest mismatch.
+  [OK] src/utils/Format.cs
+  [OK] tests/Test.cs
+
+Signatures:
+  [VERIFIED] sha256:c017446b...
+
+VERIFICATION FAILED.
+```
+
+### Filter files with --include
+
+Sign only specific file types:
+
+```
+sigil sign-manifest ./release/ --include "*.dll" --key mykey.pem
+```
+
+```
+Manifest signed: 3 files
+```
+
+Without `--include`, all files in the directory (recursive) are signed.
+
+### Multiple manifest signatures
+
+Each `sign-manifest` invocation to an existing manifest appends a new signature:
+
+```
+sigil sign-manifest ./release/ --key alice.pem
+sigil sign-manifest ./release/ --key bob.pem --output release/manifest.sig.json
+```
+
+The second invocation loads the existing manifest and appends Bob's signature. Both signatures are verified independently.
+
+### Manifests with trust bundles
+
+Trust bundles, policies, and discovery all work with manifests:
+
+```
+sigil verify-manifest release/manifest.sig.json --trust-bundle trust-signed.json --authority sha256:def456...
+sigil verify-manifest release/manifest.sig.json --discover example.com
+sigil verify-manifest release/manifest.sig.json --policy policy.json
+```
+
+### How manifest signing works
+
+**Sign flow:**
+
+1. Enumerate all files under the base directory (recursive), applying `--include` filter if specified
+2. Sort files by forward-slash-separated relative path (`StringComparer.Ordinal`) for deterministic ordering
+3. For each file: compute SHA-256 and SHA-512 digests, auto-detect SBOM format (CycloneDX/SPDX), build a `SubjectDescriptor`
+4. Build the signing payload: `JCS(subjects-array) + JCS(signed-attributes)` — digests are embedded in each subject, not hashed separately
+5. Sign the payload (ephemeral, PEM, vault, or PKCS#11)
+6. Optionally apply RFC 3161 timestamp
+7. Write the manifest envelope to `.manifest.sig.json`
+
+**Verify flow:**
+
+1. Load the manifest envelope from `.manifest.sig.json`
+2. For each subject: resolve relative path against base directory, read file, compute digests, compare against envelope
+3. Path traversal protection: reject subject names that resolve outside the base directory
+4. For each signature: rebuild the signing payload from the subjects array and verify against the embedded public key
+5. Optionally evaluate trust bundles, policies, or discovery
+
+**Key property:** The subjects array is covered by the signature. Any change — adding a file, removing a file, reordering files, or modifying a single byte — invalidates all signatures.
+
+### Manifest envelope format
+
+The `.manifest.sig.json` envelope:
+
+```json
+{
+  "version": "1.0",
+  "kind": "manifest",
+  "subjects": [
+    {
+      "digests": {
+        "sha256": "f12c1087...",
+        "sha512": "9a39f53e..."
+      },
+      "name": "README.md"
+    },
+    {
+      "digests": {
+        "sha256": "a6c43afd...",
+        "sha512": "3d80c16d..."
+      },
+      "name": "src/components/Button.cs"
+    }
+  ],
+  "signatures": [
+    {
+      "keyId": "sha256:c017446b...",
+      "algorithm": "ecdsa-p256",
+      "publicKey": "MFkwEwYH...",
+      "value": "N6Nx/spZ...",
+      "timestamp": "2026-02-10T10:13:15Z"
+    }
+  ]
+}
+```
+
+The `kind` field distinguishes manifest envelopes from single-file envelopes (`"artifact"`). Subjects are ordered deterministically by name. Each signature covers the entire subjects array — there are no per-file signatures.
+
 ## CLI reference
 
 ```
@@ -2187,6 +2422,8 @@ sigil discover dns <domain> [-o path]
 sigil discover git <url> [-o path]
 sigil sign-image <image> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--passphrase "pass"] [--algorithm name] [--label "name"] [--timestamp <tsa-url>]
 sigil verify-image <image> [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
+sigil sign-manifest <path> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
+sigil verify-manifest <manifest> [--base-path path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil git config --key <private.pem> | --vault <provider> --vault-key <reference> [--global] [--passphrase "pass"]
 ```
 
@@ -2297,6 +2534,26 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 **verify-image**: Verify signatures on an OCI container image.
 - `<image>` is a full image reference
 - Discovers Sigil signature artifacts via the OCI 1.1 referrers API
+- `--trust-bundle` and `--authority` enable trust evaluation
+- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
+- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
+
+**sign-manifest**: Sign multiple files with a shared manifest signature.
+- `<path>` is a directory (all files signed recursively)
+- Three signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`)
+- `--vault` and `--key` are mutually exclusive
+- `--include` filters files by glob pattern (e.g., `"*.dll"`)
+- `--output` overrides default output path (`<path>/manifest.sig.json`)
+- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
+- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
+- `--label` attaches a label to the signature
+- If `--output` points to an existing `.manifest.sig.json`, the new signature is appended
+- SBOM format is auto-detected per file for CycloneDX and SPDX JSON files
+
+**verify-manifest**: Verify a manifest signature covering multiple files.
+- `<manifest>` is the path to a `.manifest.sig.json` file
+- `--base-path` overrides the base directory for file resolution (default: manifest file's directory)
+- Verifies per-file digest integrity and shared signature validity
 - `--trust-bundle` and `--authority` enable trust evaluation
 - `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
 - `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
@@ -2416,6 +2673,15 @@ dotnet sigil verify-image ghcr.io/myorg/myapp:v1.0
 dotnet sigil verify-image ghcr.io/myorg/myapp:v1.0 --policy policy.json
 ```
 
+**Manifest signing:**
+
+```
+dotnet sigil sign-manifest ./release/ --key mykey.pem
+dotnet sigil sign-manifest ./release/ --include "*.dll" --key mykey.pem
+dotnet sigil verify-manifest release/manifest.sig.json
+dotnet sigil verify-manifest release/manifest.sig.json --policy policy.json
+```
+
 **Git signing:**
 
 ```
@@ -2441,6 +2707,10 @@ A typical GitHub Actions workflow using the local tool:
 
 - run: dotnet sigil verify-attestation my-app.tar.gz --type slsa-provenance-v1 --policy policy.json
 
+- run: dotnet sigil sign-manifest ./publish/ --include "*.dll" --key ${{ runner.temp }}/signing-key.pem --label "ci-pipeline"
+
+- run: dotnet sigil verify-manifest publish/manifest.sig.json --policy policy.json
+
 - run: dotnet sigil sign-image ghcr.io/myorg/myapp:${{ github.sha }} --key ${{ runner.temp }}/signing-key.pem --label "ci-pipeline"
 
 - run: dotnet sigil verify-image ghcr.io/myorg/myapp:${{ github.sha }} --policy policy.json
@@ -2448,7 +2718,6 @@ A typical GitHub Actions workflow using the local tool:
 
 ## What's coming
 
-- **Batch/manifest signing** — Sign multiple files in one operation with a single envelope.
 - **P-521 support** — ECDSA P-521 curve (same `ECDsa` code path as P-256/P-384).
 - **Keyless/OIDC signing** — Authenticate with OIDC (GitHub Actions, Google, Microsoft), get a short-lived certificate, sign without key management. Sigstore-compatible workflow without cloud dependency.
 - **Remote transparency log** — HTTP API for shared/public signing audit logs beyond the local Merkle tree.
