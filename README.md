@@ -3384,6 +3384,7 @@ sign:
 
 ## What's coming
 
+- **PFX, Certificate Store & vault key sources** — Load signing keys from PFX/PKCS#12 files, Windows Certificate Store, and vault-backed checkpoint signing for the LogServer. Full Windows enterprise integration.
 - **Archive/recursive signing** — Sign individual entries inside ZIP, tar.gz, and NuGet packages with an embedded manifest.
 - **Authenticode integration** — Embed Authenticode signatures in PE binaries for Windows OS-level trust recognition.
 - **Trust graph engine** — Build and query cryptographic trust graphs across keys, identities, artifacts, and CI systems. Answer questions like "show me everything transitively dependent on this revoked key."
