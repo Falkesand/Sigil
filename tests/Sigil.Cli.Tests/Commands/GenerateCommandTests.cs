@@ -64,4 +64,31 @@ public class GenerateCommandTests : IDisposable
         Assert.Contains("Unknown algorithm", result.StdErr);
         Assert.Contains("Supported:", result.StdErr);
     }
+
+    [Fact]
+    public async Task Generate_PassphraseFile_EncryptsKey()
+    {
+        var passFile = Path.Combine(_tempDir, "gen-pass.txt");
+        File.WriteAllText(passFile, "file-pass\n");
+
+        var prefix = Path.Combine(_tempDir, "pf-key");
+        var result = await CommandTestHelper.InvokeAsync(
+            "generate", "-o", prefix, "--passphrase-file", passFile);
+
+        var pemContent = File.ReadAllText(prefix + ".pem");
+        Assert.Contains("ENCRYPTED", pemContent);
+        Assert.Contains("encrypted with passphrase", result.StdOut);
+    }
+
+    [Fact]
+    public async Task Generate_EnvVar_EncryptsKey()
+    {
+        var prefix = Path.Combine(_tempDir, "env-key");
+        var result = await CommandTestHelper.InvokeWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = "env-gen-pass" },
+            "generate", "-o", prefix);
+
+        var pemContent = File.ReadAllText(prefix + ".pem");
+        Assert.Contains("ENCRYPTED", pemContent);
+    }
 }

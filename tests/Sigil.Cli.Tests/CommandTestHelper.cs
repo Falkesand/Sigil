@@ -11,10 +11,72 @@ public static class CommandTestHelper
 {
     private static readonly SemaphoreSlim ConsoleLock = new(1, 1);
 
+    public static async Task<T> RunWithEnvVarsAsync<T>(
+        Dictionary<string, string?> envVars, Func<Task<T>> action)
+    {
+        await ConsoleLock.WaitAsync();
+
+        var savedVars = new Dictionary<string, string?>();
+        try
+        {
+            foreach (var (key, value) in envVars)
+            {
+                savedVars[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, value);
+            }
+
+            return await action();
+        }
+        finally
+        {
+            foreach (var (key, value) in savedVars)
+                Environment.SetEnvironmentVariable(key, value);
+
+            ConsoleLock.Release();
+        }
+    }
+
+    public static async Task<CommandResult> InvokeWithEnvVarsAsync(
+        Dictionary<string, string?> envVars, params string[] args)
+    {
+        await ConsoleLock.WaitAsync();
+
+        var savedVars = new Dictionary<string, string?>();
+        try
+        {
+            foreach (var (key, value) in envVars)
+            {
+                savedVars[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, value);
+            }
+
+            return await InvokeLockedAsync(args);
+        }
+        finally
+        {
+            foreach (var (key, value) in savedVars)
+                Environment.SetEnvironmentVariable(key, value);
+
+            ConsoleLock.Release();
+        }
+    }
+
     public static async Task<CommandResult> InvokeAsync(params string[] args)
     {
         await ConsoleLock.WaitAsync();
 
+        try
+        {
+            return await InvokeLockedAsync(args);
+        }
+        finally
+        {
+            ConsoleLock.Release();
+        }
+    }
+
+    private static async Task<CommandResult> InvokeLockedAsync(string[] args)
+    {
         var stdOut = new StringWriter();
         var stdErr = new StringWriter();
 
@@ -73,7 +135,6 @@ public static class CommandTestHelper
         {
             Console.SetOut(originalOut);
             Console.SetError(originalErr);
-            ConsoleLock.Release();
         }
     }
 }

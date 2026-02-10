@@ -17,6 +17,7 @@ public static class SignManifestCommand
         var outputOption = new Option<string?>("--output") { Description = "Output path for the manifest file" };
         var labelOption = new Option<string?>("--label") { Description = "Label for this signature" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the signing key is encrypted" };
+        var passphraseFileOption = new Option<string?>("--passphrase-file") { Description = "Path to file containing the passphrase" };
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ephemeral default: ecdsa-p256)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
@@ -33,6 +34,7 @@ public static class SignManifestCommand
         cmd.Add(outputOption);
         cmd.Add(labelOption);
         cmd.Add(passphraseOption);
+        cmd.Add(passphraseFileOption);
         cmd.Add(algorithmOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
@@ -50,6 +52,7 @@ public static class SignManifestCommand
             var output = parseResult.GetValue(outputOption);
             var label = parseResult.GetValue(labelOption);
             var passphrase = parseResult.GetValue(passphraseOption);
+            var passphraseFile = parseResult.GetValue(passphraseFileOption);
             var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
@@ -184,7 +187,8 @@ public static class SignManifestCommand
 
             if (keyPath is not null)
             {
-                var loadResult = KeyLoader.Load(keyPath, passphrase, algorithmName);
+                var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile);
+                var loadResult = KeyLoader.Load(keyPath, resolvedPassphrase, algorithmName);
                 if (!loadResult.IsSuccess)
                 {
                     Console.Error.WriteLine(loadResult.ErrorMessage);

@@ -105,4 +105,59 @@ public class GitConfigCommandTests : IDisposable
 
         Assert.Contains("--key, --vault/--vault-key, or --cert-store is required", result.StdErr);
     }
+
+    [Fact]
+    public async Task Config_wrapper_does_not_contain_passphrase()
+    {
+        var keyPath = GenerateEncryptedKeyFile("secret-pass");
+
+        var result = await CommandTestHelper.InvokeAsync(
+            "git", "config", "--key", keyPath, "--passphrase", "secret-pass");
+
+        Assert.Contains("Git signing configured", result.StdOut);
+        Assert.Contains("Note: Key requires a passphrase", result.StdErr);
+        Assert.DoesNotContain("Warning: Passphrase is stored", result.StdErr);
+
+        // Read the wrapper script and verify no passphrase embedded
+        var wrapperLine = result.StdOut.Split('\n')
+            .FirstOrDefault(l => l.Contains("Wrapper:"));
+        Assert.NotNull(wrapperLine);
+        var wrapperPath = wrapperLine!.Split("Wrapper:")[1].Trim();
+        var wrapperContent = File.ReadAllText(wrapperPath);
+        Assert.DoesNotContain("secret-pass", wrapperContent);
+        Assert.DoesNotContain("--passphrase", wrapperContent);
+    }
+
+    [Fact]
+    public async Task Config_passphrase_file_works()
+    {
+        var keyPath = GenerateEncryptedKeyFile("file-pass");
+        var passFile = Path.Combine(_tempDir, "pass.txt");
+        File.WriteAllText(passFile, "file-pass\n");
+
+        var result = await CommandTestHelper.InvokeAsync(
+            "git", "config", "--key", keyPath, "--passphrase-file", passFile);
+
+        Assert.Contains("Git signing configured", result.StdOut);
+    }
+
+    [Fact]
+    public async Task Config_existing_paths_still_work()
+    {
+        var keyPath = GenerateKeyFile();
+
+        var result = await CommandTestHelper.InvokeAsync("git", "config", "--key", keyPath);
+
+        Assert.Contains("Git signing configured", result.StdOut);
+        Assert.DoesNotContain("Note: Key requires a passphrase", result.StdErr);
+    }
+
+    private string GenerateEncryptedKeyFile(string passphrase)
+    {
+        using var signer = SignerFactory.Generate(SigningAlgorithm.ECDsaP256);
+        var pemPath = Path.Combine(_tempDir, $"enc-{Guid.NewGuid():N}.pem");
+        var pemBytes = signer.ExportEncryptedPrivateKeyPemBytes(passphrase.ToCharArray());
+        File.WriteAllBytes(pemPath, pemBytes);
+        return pemPath;
+    }
 }
