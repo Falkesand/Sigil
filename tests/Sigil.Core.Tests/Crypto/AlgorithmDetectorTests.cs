@@ -28,6 +28,17 @@ public class AlgorithmDetectorTests
     }
 
     [Fact]
+    public void DetectFromSpki_ECDsaP521_ReturnsCorrectAlgorithm()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP521);
+        var spki = key.ExportSubjectPublicKeyInfo();
+
+        var detected = AlgorithmDetector.DetectFromSpki(spki);
+
+        Assert.Equal(SigningAlgorithm.ECDsaP521, detected);
+    }
+
+    [Fact]
     public void DetectFromSpki_Rsa_ReturnsCorrectAlgorithm()
     {
         using var key = RSA.Create(2048);
@@ -70,6 +81,17 @@ public class AlgorithmDetectorTests
         var detected = AlgorithmDetector.DetectFromPkcs8Der(pkcs8);
 
         Assert.Equal(SigningAlgorithm.ECDsaP384, detected);
+    }
+
+    [Fact]
+    public void DetectFromPkcs8Der_ECDsaP521_ReturnsCorrectAlgorithm()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP521);
+        var pkcs8 = key.ExportPkcs8PrivateKey();
+
+        var detected = AlgorithmDetector.DetectFromPkcs8Der(pkcs8);
+
+        Assert.Equal(SigningAlgorithm.ECDsaP521, detected);
     }
 
     [Fact]

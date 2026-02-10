@@ -29,7 +29,7 @@ public static class PemSignerLoader
             {
                 return PemLoadResult<ISigner>.Fail(
                     PemLoadErrorKind.UnknownAlgorithm,
-                    $"Unknown algorithm: {algorithmName}\nSupported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
+                    $"Unknown algorithm: {algorithmName}\nSupported: ecdsa-p256, ecdsa-p384, ecdsa-p521, rsa-pss-sha256, ml-dsa-65");
             }
         }
 

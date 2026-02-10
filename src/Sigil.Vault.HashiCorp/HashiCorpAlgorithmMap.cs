@@ -10,6 +10,7 @@ internal static class HashiCorpAlgorithmMap
     {
         TransitKeyType.ecdsa_p256 => SigningAlgorithm.ECDsaP256,
         TransitKeyType.ecdsa_p384 => SigningAlgorithm.ECDsaP384,
+        TransitKeyType.ecdsa_p521 => SigningAlgorithm.ECDsaP521,
         TransitKeyType.rsa_2048 or TransitKeyType.rsa_3072 or TransitKeyType.rsa_4096 => SigningAlgorithm.Rsa,
         _ => null
     };
@@ -19,6 +20,7 @@ internal static class HashiCorpAlgorithmMap
     {
         SigningAlgorithm.ECDsaP256 => TransitHashAlgorithm.SHA2_256,
         SigningAlgorithm.ECDsaP384 => TransitHashAlgorithm.SHA2_384,
+        SigningAlgorithm.ECDsaP521 => TransitHashAlgorithm.SHA2_512,
         SigningAlgorithm.Rsa => TransitHashAlgorithm.SHA2_256,
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm), algorithm, "Unsupported algorithm for Transit.")
     };

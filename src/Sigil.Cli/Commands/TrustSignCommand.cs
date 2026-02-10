@@ -13,7 +13,7 @@ public static class TrustSignCommand
         var keyOption = new Option<string?>("--key") { Description = "Path to the authority's private key PEM" };
         var outputOption = new Option<string?>("-o") { Description = "Output path for signed bundle" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the key is encrypted" };
-        var algorithmOption = new Option<string?>("--algorithm") { Description = "Algorithm hint for encrypted PEM detection (ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65)" };
+        var algorithmOption = new Option<string?>("--algorithm") { Description = "Algorithm hint for encrypted PEM detection (ecdsa-p256, ecdsa-p384, ecdsa-p521, rsa-pss-sha256, ml-dsa-65)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
 

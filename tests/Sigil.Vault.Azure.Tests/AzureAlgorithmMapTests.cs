@@ -26,6 +26,15 @@ public class AzureAlgorithmMapTests
     }
 
     [Fact]
+    public void TryGetAzureAlgorithm_ECDsaP521_ReturnsES512()
+    {
+        var result = AzureAlgorithmMap.TryGetAzureAlgorithm(SigningAlgorithm.ECDsaP521, out var azureAlgorithm);
+
+        Assert.True(result);
+        Assert.Equal(SignatureAlgorithm.ES512, azureAlgorithm);
+    }
+
+    [Fact]
     public void TryGetAzureAlgorithm_Rsa_ReturnsPS256()
     {
         var result = AzureAlgorithmMap.TryGetAzureAlgorithm(SigningAlgorithm.Rsa, out var azureAlgorithm);
@@ -61,6 +70,24 @@ public class AzureAlgorithmMapTests
 
         Assert.True(result);
         Assert.Equal(SigningAlgorithm.ECDsaP384, algorithm);
+    }
+
+    [Fact]
+    public void TryGetSigningAlgorithm_EcP521_ReturnsECDsaP521()
+    {
+        var result = AzureAlgorithmMap.TryGetSigningAlgorithm(KeyType.Ec, KeyCurveName.P521, out var algorithm);
+
+        Assert.True(result);
+        Assert.Equal(SigningAlgorithm.ECDsaP521, algorithm);
+    }
+
+    [Fact]
+    public void TryGetSigningAlgorithm_EcHsmP521_ReturnsECDsaP521()
+    {
+        var result = AzureAlgorithmMap.TryGetSigningAlgorithm(KeyType.EcHsm, KeyCurveName.P521, out var algorithm);
+
+        Assert.True(result);
+        Assert.Equal(SigningAlgorithm.ECDsaP521, algorithm);
     }
 
     [Fact]

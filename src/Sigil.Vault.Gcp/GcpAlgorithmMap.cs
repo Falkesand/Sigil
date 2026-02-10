@@ -12,6 +12,7 @@ internal static class GcpAlgorithmMap
             SigningAlgorithm.ECDsaP256 => CryptoKeyVersion.Types.CryptoKeyVersionAlgorithm.EcSignP256Sha256,
             SigningAlgorithm.ECDsaP384 => CryptoKeyVersion.Types.CryptoKeyVersionAlgorithm.EcSignP384Sha384,
             SigningAlgorithm.Rsa => CryptoKeyVersion.Types.CryptoKeyVersionAlgorithm.RsaSignPss2048Sha256,
+            SigningAlgorithm.ECDsaP521 => throw new NotSupportedException("ECDSA P-521 is not supported by Google Cloud KMS"),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException("Ed25519 is not supported by Google Cloud KMS"),
             SigningAlgorithm.MLDsa65 => throw new NotSupportedException("ML-DSA-65 is not supported by Google Cloud KMS"),
             _ => throw new ArgumentOutOfRangeException(nameof(algorithm), algorithm, "Unsupported signing algorithm")

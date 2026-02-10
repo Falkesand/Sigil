@@ -4,6 +4,7 @@ public enum SigningAlgorithm
 {
     ECDsaP256,
     ECDsaP384,
+    ECDsaP521,
     Ed25519,
     Rsa,
     MLDsa65
@@ -15,6 +16,7 @@ public static class SigningAlgorithmExtensions
     {
         SigningAlgorithm.ECDsaP256 => "ecdsa-p256",
         SigningAlgorithm.ECDsaP384 => "ecdsa-p384",
+        SigningAlgorithm.ECDsaP521 => "ecdsa-p521",
         SigningAlgorithm.Ed25519 => "ed25519",
         SigningAlgorithm.Rsa => "rsa-pss-sha256",
         SigningAlgorithm.MLDsa65 => "ml-dsa-65",
@@ -25,6 +27,7 @@ public static class SigningAlgorithmExtensions
     {
         "ecdsa-p256" => SigningAlgorithm.ECDsaP256,
         "ecdsa-p384" => SigningAlgorithm.ECDsaP384,
+        "ecdsa-p521" => SigningAlgorithm.ECDsaP521,
         "ed25519" => SigningAlgorithm.Ed25519,
         "rsa-pss-sha256" => SigningAlgorithm.Rsa,
         "ml-dsa-65" => SigningAlgorithm.MLDsa65,

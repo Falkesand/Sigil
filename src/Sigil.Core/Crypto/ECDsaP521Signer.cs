@@ -1,0 +1,145 @@
+using System.Security.Cryptography;
+using System.Text;
+
+namespace Sigil.Crypto;
+
+/// <summary>
+/// Signs data using ECDSA with the NIST P-521 curve.
+/// BCL-only implementation — no external dependencies.
+/// </summary>
+public sealed class ECDsaP521Signer : ISigner
+{
+    private readonly ECDsa _key;
+    private bool _disposed;
+
+    public SigningAlgorithm Algorithm => SigningAlgorithm.ECDsaP521;
+
+    public byte[] PublicKey
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _key.ExportSubjectPublicKeyInfo();
+        }
+    }
+
+    private ECDsaP521Signer(ECDsa key)
+    {
+        _key = key;
+    }
+
+    public static ECDsaP521Signer Generate()
+    {
+        var key = ECDsa.Create(ECCurve.NamedCurves.nistP521);
+        return new ECDsaP521Signer(key);
+    }
+
+    public static ECDsaP521Signer FromPkcs8(byte[] pkcs8)
+    {
+        var key = ECDsa.Create();
+        key.ImportPkcs8PrivateKey(pkcs8, out _);
+        return new ECDsaP521Signer(key);
+    }
+
+    public static ECDsaP521Signer FromEncryptedPkcs8(byte[] encryptedPkcs8, ReadOnlySpan<char> password)
+    {
+        var key = ECDsa.Create();
+        key.ImportEncryptedPkcs8PrivateKey(password, encryptedPkcs8, out _);
+        return new ECDsaP521Signer(key);
+    }
+
+    public static ECDsaP521Signer FromPem(ReadOnlySpan<char> pem)
+    {
+        if (pem.IsEmpty || pem.IsWhiteSpace())
+            throw new ArgumentException("Value cannot be null or whitespace.", nameof(pem));
+        var key = ECDsa.Create();
+        key.ImportFromPem(pem);
+        return new ECDsaP521Signer(key);
+    }
+
+    public static ECDsaP521Signer FromEncryptedPem(ReadOnlySpan<char> pem, ReadOnlySpan<char> passphrase)
+    {
+        if (pem.IsEmpty || pem.IsWhiteSpace())
+            throw new ArgumentException("Value cannot be null or whitespace.", nameof(pem));
+        if (passphrase.IsEmpty || passphrase.IsWhiteSpace())
+            throw new ArgumentException("Value cannot be null or whitespace.", nameof(passphrase));
+        var key = ECDsa.Create();
+        key.ImportFromEncryptedPem(pem, passphrase);
+        return new ECDsaP521Signer(key);
+    }
+
+    public byte[] Sign(byte[] data)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(data);
+        return _key.SignData(data, HashAlgorithmName.SHA512);
+    }
+
+    public byte[] ExportPkcs8()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _key.ExportPkcs8PrivateKey();
+    }
+
+    public byte[] ExportEncryptedPkcs8(ReadOnlySpan<char> password)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var pbeParameters = new PbeParameters(
+            PbeEncryptionAlgorithm.Aes256Cbc,
+            HashAlgorithmName.SHA256,
+            100_000);
+        return _key.ExportEncryptedPkcs8PrivateKey(password, pbeParameters);
+    }
+
+    public string ExportPublicKeyPem()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _key.ExportSubjectPublicKeyInfoPem();
+    }
+
+    public string ExportPrivateKeyPem()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _key.ExportPkcs8PrivateKeyPem();
+    }
+
+    public string ExportEncryptedPrivateKeyPem(ReadOnlySpan<char> password)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var pbeParameters = new PbeParameters(
+            PbeEncryptionAlgorithm.Aes256Cbc,
+            HashAlgorithmName.SHA256,
+            100_000);
+        return _key.ExportEncryptedPkcs8PrivateKeyPem(password, pbeParameters);
+    }
+
+    public byte[] ExportPrivateKeyPemBytes()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return Encoding.UTF8.GetBytes(_key.ExportPkcs8PrivateKeyPem());
+    }
+
+    public byte[] ExportEncryptedPrivateKeyPemBytes(ReadOnlySpan<char> password)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var pbeParameters = new PbeParameters(
+            PbeEncryptionAlgorithm.Aes256Cbc,
+            HashAlgorithmName.SHA256,
+            100_000);
+        return Encoding.UTF8.GetBytes(_key.ExportEncryptedPkcs8PrivateKeyPem(password, pbeParameters));
+    }
+
+    public ValueTask<byte[]> SignAsync(byte[] data, CancellationToken cancellationToken = default)
+        => new(Sign(data));
+
+    public bool CanExportPrivateKey => true;
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _key.Dispose();
+            _disposed = true;
+        }
+    }
+}

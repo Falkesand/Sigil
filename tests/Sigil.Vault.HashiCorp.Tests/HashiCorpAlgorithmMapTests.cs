@@ -22,6 +22,14 @@ public class HashiCorpAlgorithmMapTests
         Assert.Equal(SigningAlgorithm.ECDsaP384, result);
     }
 
+    [Fact]
+    public void FromTransitKeyType_EcdsaP521_ReturnsECDsaP521()
+    {
+        var result = HashiCorpAlgorithmMap.FromTransitKeyType(TransitKeyType.ecdsa_p521);
+
+        Assert.Equal(SigningAlgorithm.ECDsaP521, result);
+    }
+
     [Theory]
     [InlineData(TransitKeyType.rsa_2048)]
     [InlineData(TransitKeyType.rsa_3072)]
@@ -68,6 +76,14 @@ public class HashiCorpAlgorithmMapTests
     }
 
     [Fact]
+    public void ToTransitHashAlgorithm_ECDsaP521_ReturnsSha512()
+    {
+        var result = HashiCorpAlgorithmMap.ToTransitHashAlgorithm(SigningAlgorithm.ECDsaP521);
+
+        Assert.Equal(TransitHashAlgorithm.SHA2_512, result);
+    }
+
+    [Fact]
     public void ToTransitHashAlgorithm_Rsa_ReturnsSha256()
     {
         var result = HashiCorpAlgorithmMap.ToTransitHashAlgorithm(SigningAlgorithm.Rsa);
@@ -104,6 +120,7 @@ public class HashiCorpAlgorithmMapTests
     [Theory]
     [InlineData(SigningAlgorithm.ECDsaP256)]
     [InlineData(SigningAlgorithm.ECDsaP384)]
+    [InlineData(SigningAlgorithm.ECDsaP521)]
     public void ToTransitSignatureAlgorithm_EcTypes_ReturnsNull(SigningAlgorithm algorithm)
     {
         var result = HashiCorpAlgorithmMap.ToTransitSignatureAlgorithm(algorithm);

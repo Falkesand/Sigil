@@ -28,6 +28,9 @@ internal static class AzureAlgorithmMap
             case SigningAlgorithm.ECDsaP384:
                 azureAlgorithm = SignatureAlgorithm.ES384;
                 return true;
+            case SigningAlgorithm.ECDsaP521:
+                azureAlgorithm = SignatureAlgorithm.ES512;
+                return true;
             case SigningAlgorithm.Rsa:
                 azureAlgorithm = SignatureAlgorithm.PS256;
                 return true;
@@ -58,6 +61,9 @@ internal static class AzureAlgorithmMap
                     return true;
                 case "P-384":
                     algorithm = SigningAlgorithm.ECDsaP384;
+                    return true;
+                case "P-521":
+                    algorithm = SigningAlgorithm.ECDsaP521;
                     return true;
                 default:
                     algorithm = default;

@@ -27,6 +27,7 @@ public class MultiAlgorithmSigningTests : IDisposable
     [Theory]
     [InlineData(SigningAlgorithm.ECDsaP256)]
     [InlineData(SigningAlgorithm.ECDsaP384)]
+    [InlineData(SigningAlgorithm.ECDsaP521)]
     [InlineData(SigningAlgorithm.Rsa)]
     public void SignAndVerify_RoundTrip_PerAlgorithm(SigningAlgorithm algorithm)
     {
@@ -48,6 +49,7 @@ public class MultiAlgorithmSigningTests : IDisposable
     [Theory]
     [InlineData(SigningAlgorithm.ECDsaP256)]
     [InlineData(SigningAlgorithm.ECDsaP384)]
+    [InlineData(SigningAlgorithm.ECDsaP521)]
     [InlineData(SigningAlgorithm.Rsa)]
     public void SignAndVerify_TamperedArtifact_Fails(SigningAlgorithm algorithm)
     {
@@ -75,20 +77,23 @@ public class MultiAlgorithmSigningTests : IDisposable
         // Create signers for each algorithm
         using var p256Signer = SignerFactory.Generate(SigningAlgorithm.ECDsaP256);
         using var p384Signer = SignerFactory.Generate(SigningAlgorithm.ECDsaP384);
+        using var p521Signer = SignerFactory.Generate(SigningAlgorithm.ECDsaP521);
         using var rsaSigner = SignerFactory.Generate(SigningAlgorithm.Rsa);
 
         var p256Fp = KeyFingerprint.Compute(p256Signer.PublicKey);
         var p384Fp = KeyFingerprint.Compute(p384Signer.PublicKey);
+        var p521Fp = KeyFingerprint.Compute(p521Signer.PublicKey);
         var rsaFp = KeyFingerprint.Compute(rsaSigner.PublicKey);
 
         // Sign with P-256 first
         var envelope = ArtifactSigner.Sign(_artifactPath, p256Signer, p256Fp, "p256");
 
-        // Append P-384 and RSA signatures
+        // Append P-384, P-521, and RSA signatures
         ArtifactSigner.AppendSignature(envelope, artifactBytes, p384Signer, p384Fp, "p384");
+        ArtifactSigner.AppendSignature(envelope, artifactBytes, p521Signer, p521Fp, "p521");
         ArtifactSigner.AppendSignature(envelope, artifactBytes, rsaSigner, rsaFp, "rsa");
 
-        Assert.Equal(3, envelope.Signatures.Count);
+        Assert.Equal(4, envelope.Signatures.Count);
 
         // Serialize and deserialize
         var json = ArtifactSigner.Serialize(envelope);
@@ -98,13 +103,14 @@ public class MultiAlgorithmSigningTests : IDisposable
         var result = SignatureValidator.Verify(_artifactPath, deserialized);
 
         Assert.True(result.ArtifactDigestMatch);
-        Assert.Equal(3, result.Signatures.Count);
+        Assert.Equal(4, result.Signatures.Count);
         Assert.True(result.AllSignaturesValid);
 
         // Verify algorithm names
         Assert.Equal("ecdsa-p256", deserialized.Signatures[0].Algorithm);
         Assert.Equal("ecdsa-p384", deserialized.Signatures[1].Algorithm);
-        Assert.Equal("rsa-pss-sha256", deserialized.Signatures[2].Algorithm);
+        Assert.Equal("ecdsa-p521", deserialized.Signatures[2].Algorithm);
+        Assert.Equal("rsa-pss-sha256", deserialized.Signatures[3].Algorithm);
     }
 
     [Fact]
@@ -126,7 +132,7 @@ public class MultiAlgorithmSigningTests : IDisposable
     [Fact]
     public void VerifierFactory_CorrectlyDispatches_AllAlgorithms()
     {
-        var algorithms = new[] { SigningAlgorithm.ECDsaP256, SigningAlgorithm.ECDsaP384, SigningAlgorithm.Rsa };
+        var algorithms = new[] { SigningAlgorithm.ECDsaP256, SigningAlgorithm.ECDsaP384, SigningAlgorithm.ECDsaP521, SigningAlgorithm.Rsa };
 
         foreach (var algorithm in algorithms)
         {
@@ -145,6 +151,7 @@ public class MultiAlgorithmSigningTests : IDisposable
     [Theory]
     [InlineData(SigningAlgorithm.ECDsaP256)]
     [InlineData(SigningAlgorithm.ECDsaP384)]
+    [InlineData(SigningAlgorithm.ECDsaP521)]
     [InlineData(SigningAlgorithm.Rsa)]
     public void PemExportImport_ThenSign_Verifies(SigningAlgorithm algorithm)
     {

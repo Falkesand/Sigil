@@ -23,6 +23,14 @@ public class AwsAlgorithmMapTests
     }
 
     [Fact]
+    public void ToAwsAlgorithm_ECDsaP521_ReturnsECDSA_SHA_512()
+    {
+        var result = AwsAlgorithmMap.ToAwsAlgorithm(SigningAlgorithm.ECDsaP521);
+
+        Assert.Equal(SigningAlgorithmSpec.ECDSA_SHA_512, result);
+    }
+
+    [Fact]
     public void ToAwsAlgorithm_Rsa_ReturnsRSASSA_PSS_SHA_256()
     {
         var result = AwsAlgorithmMap.ToAwsAlgorithm(SigningAlgorithm.Rsa);
@@ -56,6 +64,14 @@ public class AwsAlgorithmMapTests
         var result = AwsAlgorithmMap.FromAwsKeySpec(KeySpec.ECC_NIST_P384);
 
         Assert.Equal(SigningAlgorithm.ECDsaP384, result);
+    }
+
+    [Fact]
+    public void FromAwsKeySpec_ECC_NIST_P521_ReturnsECDsaP521()
+    {
+        var result = AwsAlgorithmMap.FromAwsKeySpec(KeySpec.ECC_NIST_P521);
+
+        Assert.Equal(SigningAlgorithm.ECDsaP521, result);
     }
 
     [Fact]
@@ -95,6 +111,7 @@ public class AwsAlgorithmMapTests
     [Theory]
     [InlineData(SigningAlgorithm.ECDsaP256)]
     [InlineData(SigningAlgorithm.ECDsaP384)]
+    [InlineData(SigningAlgorithm.ECDsaP521)]
     [InlineData(SigningAlgorithm.Rsa)]
     public void ToAwsAlgorithm_SupportedAlgorithms_DoNotThrow(SigningAlgorithm algorithm)
     {
@@ -106,6 +123,7 @@ public class AwsAlgorithmMapTests
     [Theory]
     [InlineData(SigningAlgorithm.ECDsaP256)]
     [InlineData(SigningAlgorithm.ECDsaP384)]
+    [InlineData(SigningAlgorithm.ECDsaP521)]
     [InlineData(SigningAlgorithm.Rsa)]
     public void RoundTrip_ToAwsAndBack_PreservesAlgorithm(SigningAlgorithm algorithm)
     {

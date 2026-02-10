@@ -15,6 +15,7 @@ public static class AlgorithmDetector
     // EC curve parameter OIDs
     private const string OidNistP256 = "1.2.840.10045.3.1.7";
     private const string OidNistP384 = "1.3.132.0.34";
+    private const string OidNistP521 = "1.3.132.0.35";
 
     // RSA algorithm OID: 1.2.840.113549.1.1.1
     private const string OidRsaEncryption = "1.2.840.113549.1.1.1";
@@ -107,6 +108,7 @@ public static class AlgorithmDetector
         {
             OidNistP256 => SigningAlgorithm.ECDsaP256,
             OidNistP384 => SigningAlgorithm.ECDsaP384,
+            OidNistP521 => SigningAlgorithm.ECDsaP521,
             _ => throw new NotSupportedException($"Unsupported EC curve OID: {curveOid}")
         };
     }
