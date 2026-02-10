@@ -14,8 +14,13 @@ public static class OidcTokenProviderFactory
             return KeylessResult<IOidcTokenProvider>.Ok(new GitHubActionsOidcProvider());
         }
 
+        if (GitLabCiOidcProvider.IsAvailable())
+        {
+            return KeylessResult<IOidcTokenProvider>.Ok(new GitLabCiOidcProvider());
+        }
+
         return KeylessResult<IOidcTokenProvider>.Fail(
             KeylessErrorKind.ConfigurationError,
-            "No OIDC provider available. Use --oidc-token or run in a supported CI environment (GitHub Actions).");
+            "No OIDC provider available. Use --oidc-token or run in a supported CI environment (GitHub Actions, GitLab CI).");
     }
 }

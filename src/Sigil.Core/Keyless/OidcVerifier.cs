@@ -56,7 +56,8 @@ public sealed class OidcVerifier : IDisposable
         var expectedAudience = "sigil:" + fingerprint.Value;
 
         var result = await _jwtValidator.ValidateAsync(
-            entry.OidcToken, expectedAudience, signingTime, ct).ConfigureAwait(false);
+            entry.OidcToken, expectedAudience, signingTime,
+            allowGenericAudience: true, ct).ConfigureAwait(false);
 
         if (!result.IsSuccess)
         {

@@ -265,6 +265,47 @@ public class OidcVerifierTests : IDisposable
         rsaKey.Dispose();
     }
 
+    [Fact]
+    public async Task VerifyAsync_GenericAudience_Succeeds()
+    {
+        using var signer = SignerFactory.Generate(SigningAlgorithm.ECDsaP256);
+
+        // JWT has generic audience "sigil" instead of key-specific "sigil:sha256:<fp>"
+        var (jwt, rsaKey) = TestJwtBuilder.CreateRs256Token(
+            "https://test.example.com", "user@gitlab.com", "sigil");
+
+        var handler = TestJwtBuilder.CreateJwksHandler(rsaKey, "test-kid");
+        CreateVerifier(handler);
+
+        var entry = CreateEntry(signer, jwt);
+        var result = await _verifier!.VerifyAsync(entry);
+
+        Assert.True(result.IsValid);
+        Assert.Equal("https://test.example.com", result.Issuer);
+        Assert.Equal("user@gitlab.com", result.Identity);
+        rsaKey.Dispose();
+    }
+
+    [Fact]
+    public async Task VerifyAsync_WrongGenericAudience_Fails()
+    {
+        using var signer = SignerFactory.Generate(SigningAlgorithm.ECDsaP256);
+
+        // JWT has wrong audience "aws" — not "sigil" and not key-specific
+        var (jwt, rsaKey) = TestJwtBuilder.CreateRs256Token(
+            "https://test.example.com", "user", "aws");
+
+        var handler = TestJwtBuilder.CreateJwksHandler(rsaKey, "test-kid");
+        CreateVerifier(handler);
+
+        var entry = CreateEntry(signer, jwt);
+        var result = await _verifier!.VerifyAsync(entry);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("audience", result.Error, StringComparison.OrdinalIgnoreCase);
+        rsaKey.Dispose();
+    }
+
     private static SignatureEntry CreateEntry(ISigner signer, string jwt)
     {
         var fingerprint = KeyFingerprint.Compute(signer.PublicKey);

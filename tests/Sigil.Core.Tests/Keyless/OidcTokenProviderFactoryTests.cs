@@ -21,6 +21,7 @@ public class OidcTokenProviderFactoryTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal(KeylessErrorKind.ConfigurationError, result.ErrorKind);
+        Assert.Contains("GitLab CI", result.ErrorMessage);
     }
 
     [Fact]

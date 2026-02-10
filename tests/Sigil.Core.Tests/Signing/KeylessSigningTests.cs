@@ -124,6 +124,34 @@ public class KeylessSigningTests : IDisposable
         Assert.Equal("dummy-timestamp-token", timestamped.TimestampToken);
     }
 
+    [Fact]
+    public async Task RoundTrip_GenericAudienceToken_VerifySucceeds()
+    {
+        // Simulate GitLab CI: token has generic "sigil" audience
+        var (jwt, rsaKey) = TestJwtBuilder.CreateRs256Token(
+            "https://gitlab.com", "project_path:myorg/myproject:ref_type:branch:ref:main", "sigil");
+
+        var handler = TestJwtBuilder.CreateJwksHandler(rsaKey, "test-kid");
+        using var httpClient = new HttpClient(handler);
+        using var jwksClient = new JwksClient(httpClient);
+        using var jwtValidator = new JwtValidator(jwksClient);
+        using var oidcVerifier = new OidcVerifier(jwtValidator);
+
+        // Sign with generic-audience token
+        var provider = new ManualOidcTokenProvider(jwt);
+        using var keylessSigner = (await KeylessSigner.CreateAsync(provider)).Value;
+        var envelope = await ArtifactSigner.SignKeylessAsync(_artifactPath, keylessSigner);
+
+        // Verify the OIDC token — should accept generic "sigil" audience
+        var entry = envelope.Signatures[0];
+        var result = await oidcVerifier.VerifyAsync(entry);
+
+        Assert.True(result.IsValid);
+        Assert.Equal("https://gitlab.com", result.Issuer);
+        Assert.Equal("project_path:myorg/myproject:ref_type:branch:ref:main", result.Identity);
+        rsaKey.Dispose();
+    }
+
     private static async Task<KeylessSigner> CreateTestKeylessSigner()
     {
         var (jwt, key) = TestJwtBuilder.CreateRs256Token(

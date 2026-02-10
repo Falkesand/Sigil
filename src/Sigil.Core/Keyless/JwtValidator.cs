@@ -25,7 +25,9 @@ public sealed class JwtValidator : IDisposable
 
     public async Task<KeylessResult<JwtToken>> ValidateAsync(
         string rawToken, string expectedAudience,
-        DateTimeOffset? validationTime = null, CancellationToken ct = default)
+        DateTimeOffset? validationTime = null,
+        bool allowGenericAudience = false,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rawToken);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedAudience);
@@ -55,7 +57,7 @@ public sealed class JwtValidator : IDisposable
         }
 
         // Step 4: Check audience
-        if (!string.Equals(token.Audience, expectedAudience, StringComparison.Ordinal))
+        if (!IsAudienceAcceptable(token.Audience, expectedAudience, allowGenericAudience))
         {
             return KeylessResult<JwtToken>.Fail(
                 KeylessErrorKind.AudienceMismatch,
@@ -224,6 +226,23 @@ public sealed class JwtValidator : IDisposable
             return KeylessResult<bool>.Fail(
                 KeylessErrorKind.TokenValidationFailed, $"ECDSA verification error: {ex.Message}");
         }
+    }
+
+    internal const string GenericAudience = "sigil";
+    internal const string AudiencePrefix = "sigil:";
+
+    internal static bool IsAudienceAcceptable(
+        string? tokenAudience, string expectedAudience, bool allowGeneric)
+    {
+        if (string.Equals(tokenAudience, expectedAudience, StringComparison.Ordinal))
+            return true;
+
+        if (allowGeneric &&
+            string.Equals(tokenAudience, GenericAudience, StringComparison.Ordinal) &&
+            expectedAudience.StartsWith(AudiencePrefix, StringComparison.Ordinal))
+            return true;
+
+        return false;
     }
 
     public void Dispose()

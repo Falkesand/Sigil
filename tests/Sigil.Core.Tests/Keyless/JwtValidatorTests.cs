@@ -151,6 +151,88 @@ public class JwtValidatorTests : IDisposable
         key.Dispose();
     }
 
+    [Fact]
+    public async Task ValidateAsync_GenericAudience_AcceptedWhenOptIn()
+    {
+        var (jwt, key) = TestJwtBuilder.CreateRs256Token(
+            "https://test.example.com", "user", "sigil");
+
+        var handler = TestJwtBuilder.CreateJwksHandler(key, "test-kid");
+        CreateValidator(handler);
+
+        var result = await _validator!.ValidateAsync(
+            jwt, "sigil:sha256:abc123", allowGenericAudience: true);
+
+        Assert.True(result.IsSuccess);
+        key.Dispose();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_GenericAudience_RejectedByDefault()
+    {
+        var (jwt, key) = TestJwtBuilder.CreateRs256Token(
+            "https://test.example.com", "user", "sigil");
+
+        var handler = TestJwtBuilder.CreateJwksHandler(key, "test-kid");
+        CreateValidator(handler);
+
+        var result = await _validator!.ValidateAsync(jwt, "sigil:sha256:abc123");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(KeylessErrorKind.AudienceMismatch, result.ErrorKind);
+        key.Dispose();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_WrongGenericAudience_RejectedEvenWithOptIn()
+    {
+        var (jwt, key) = TestJwtBuilder.CreateRs256Token(
+            "https://test.example.com", "user", "aws");
+
+        var handler = TestJwtBuilder.CreateJwksHandler(key, "test-kid");
+        CreateValidator(handler);
+
+        var result = await _validator!.ValidateAsync(
+            jwt, "sigil:sha256:abc123", allowGenericAudience: true);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(KeylessErrorKind.AudienceMismatch, result.ErrorKind);
+        key.Dispose();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_ExactMatch_WorksWithAllowGeneric()
+    {
+        var (jwt, key) = TestJwtBuilder.CreateRs256Token(
+            "https://test.example.com", "user", "sigil:sha256:exact");
+
+        var handler = TestJwtBuilder.CreateJwksHandler(key, "test-kid");
+        CreateValidator(handler);
+
+        var result = await _validator!.ValidateAsync(
+            jwt, "sigil:sha256:exact", allowGenericAudience: true);
+
+        Assert.True(result.IsSuccess);
+        key.Dispose();
+    }
+
+    [Theory]
+    [InlineData("sigil", "sigil:sha256:abc", true, true)]
+    [InlineData("sigil", "sigil:sha256:abc", false, false)]
+    [InlineData("sigil:sha256:abc", "sigil:sha256:abc", false, true)]
+    [InlineData("sigil:sha256:abc", "sigil:sha256:abc", true, true)]
+    [InlineData("aws", "sigil:sha256:abc", true, false)]
+    [InlineData("sigil", "other-aud", true, false)]
+    [InlineData(null, "sigil:sha256:abc", true, false)]
+    public void IsAudienceAcceptable_VariousInputs(
+        string? tokenAudience, string expectedAudience, bool allowGeneric, bool expected)
+    {
+        var result = JwtValidator.IsAudienceAcceptable(
+            tokenAudience, expectedAudience, allowGeneric);
+
+        Assert.Equal(expected, result);
+    }
+
     private void CreateValidator(HttpMessageHandler handler)
     {
         _httpClient = new HttpClient(handler);
