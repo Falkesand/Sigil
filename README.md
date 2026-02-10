@@ -18,6 +18,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Create an attestation](#create-an-attestation)
   - [Verify with a policy](#verify-with-a-policy)
   - [Log a signing event](#log-a-signing-event)
+  - [Log to a remote server](#log-to-a-remote-server)
   - [Sign git commits](#sign-git-commits)
   - [Sign a container image](#sign-a-container-image)
   - [Verify a container image](#verify-a-container-image)
@@ -80,6 +81,17 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Consistency proofs](#consistency-proofs)
   - [How the transparency log works](#how-the-transparency-log-works)
   - [Log entry format](#log-entry-format)
+- [Remote transparency log](#remote-transparency-log)
+  - [The problem remote logs solve](#the-problem-remote-logs-solve)
+  - [Sign and log in one step](#sign-and-log-in-one-step)
+  - [Enforce logging with policy](#enforce-logging-with-policy)
+  - [Running the Sigil LogServer](#running-the-sigil-logserver)
+  - [Database providers](#database-providers)
+  - [mTLS (mutual TLS)](#mtls-mutual-tls)
+  - [Querying the log server](#querying-the-log-server)
+  - [Rekor integration](#rekor-integration)
+  - [How remote logging works](#how-remote-logging-works)
+  - [Transparency receipt format](#transparency-receipt-format)
 - [Git commit signing](#git-commit-signing)
   - [Configure git to use Sigil](#configure-git-to-use-sigil)
   - [Sign with a vault key (no private key on disk)](#sign-with-a-vault-key-no-private-key-on-disk)
@@ -145,6 +157,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 | Git commit signing | Yes (GPG drop-in) | No | Yes | No |
 | Container signing | Yes (OCI 1.1 referrers) | Yes (Cosign) | No | No |
 | Batch/manifest signing | Yes (atomic multi-file) | No | No | No |
+| Transparency log | Yes (local + remote server + Rekor) | Yes (Rekor) | No | No |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
 Sigil is for people who want to sign things **without asking permission from a cloud service**.
@@ -417,6 +430,35 @@ sigil log search --key sha256:c017446b...
 
 See [Transparency log](#transparency-log) for details.
 
+### Log to a remote server
+
+Submit signing events to a shared transparency log server during signing:
+
+```
+sigil sign release.tar.gz --key mykey.pem --log-url https://log.example.com --log-api-key secret123
+```
+
+```
+Signed: release.tar.gz
+Logged: https://log.example.com (index 1)
+```
+
+The transparency receipt (log index, signed checkpoint, inclusion proof) is embedded in the signature envelope. Verifiers can enforce that signatures were logged:
+
+```
+sigil verify release.tar.gz --policy policy.json
+```
+
+Where `policy.json` contains `{ "rules": [{ "require": "logged" }] }`.
+
+You can also log to [Sigstore Rekor](https://rekor.sigstore.dev) with the `rekor` shorthand:
+
+```
+sigil sign release.tar.gz --key mykey.pem --log-url rekor
+```
+
+See [Remote transparency log](#remote-transparency-log) for details.
+
 ### Sign git commits
 
 Sigil can replace GPG for git commit and tag signing:
@@ -588,7 +630,16 @@ The `.sig.json` envelope is a self-contained, detached signature:
       "value": "base64...",
       "timestamp": "2026-02-07T14:30:00Z",
       "label": "ci-pipeline",
-      "timestampToken": "base64-DER..."
+      "timestampToken": "base64-DER...",
+      "transparencyLogUrl": "https://log.example.com",
+      "transparencyLogIndex": 1,
+      "transparencySignedCheckpoint": "base64...",
+      "transparencyInclusionProof": {
+        "leafIndex": 0,
+        "treeSize": 1,
+        "rootHash": "a1b2c3d4...",
+        "hashes": []
+      }
     }
   ]
 }
@@ -599,6 +650,8 @@ The `publicKey` field contains the base64-encoded SPKI public key. During verifi
 The `mediaType` and `metadata` fields are only present for detected SBOM files. They are `null`/absent for regular files.
 
 The `timestampToken` field is present only when an RFC 3161 timestamp has been applied. It contains the base64-encoded DER of a CMS/PKCS#7 signed timestamp token from a Timestamp Authority. See [Timestamping](#timestamping).
+
+The `transparencyLogUrl`, `transparencyLogIndex`, `transparencySignedCheckpoint`, and `transparencyInclusionProof` fields are present only when the signature was submitted to a remote transparency log. See [Remote transparency log](#remote-transparency-log).
 
 ## Multiple signatures
 
@@ -1469,6 +1522,7 @@ Policy evaluation FAILED.
 | `label` | At least one signature must have a label matching a glob pattern | `match` (glob) |
 | `trusted` | At least one signature must be trusted by a trust bundle | `bundle` (relative path) |
 | `key` | At least one signature must be from a specific key | `fingerprints` (list) |
+| `logged` | At least one signature must have a transparency log receipt | `logPublicKey` (optional, base64 SPKI) |
 
 **min-signatures** — Requires at least N cryptographically valid signatures:
 
@@ -1515,6 +1569,15 @@ If `authority` is omitted and the bundle is signed, the authority is auto-extrac
 { "require": "key", "fingerprints": ["sha256:abc123...", "sha256:def456..."] }
 ```
 
+**logged** — At least one valid signature must have a transparency log receipt (log URL, signed checkpoint, and inclusion proof). Optionally verify the checkpoint signature against the log's public key:
+
+```json
+{ "require": "logged" }
+{ "require": "logged", "logPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE..." }
+```
+
+Without `logPublicKey`, the rule performs a structural check only (fields present, inclusion proof valid against the Merkle root). With `logPublicKey`, the signed checkpoint is also cryptographically verified against the log's signing key.
+
 ### Policies with attestations
 
 Policies work with attestations too:
@@ -1537,7 +1600,8 @@ Most rules work identically for attestations. The exception is `sbom-metadata`, 
     { "require": "algorithm", "allowed": ["ecdsa-p256", "ecdsa-p384"] },
     { "require": "label", "match": "ci-*" },
     { "require": "trusted", "bundle": "trust.json", "authority": "sha256:def456..." },
-    { "require": "key", "fingerprints": ["sha256:abc123..."] }
+    { "require": "key", "fingerprints": ["sha256:abc123..."] },
+    { "require": "logged" }
   ]
 }
 ```
@@ -1984,6 +2048,250 @@ The checkpoint file (`.sigil.checkpoint`) stores the current tree state:
   "timestamp": "2026-02-09T16:00:00.0000000Z"
 }
 ```
+
+## Remote transparency log
+
+A local transparency log only audits what the local signer records. For transparency to have teeth, **verifiers must refuse signatures that weren't logged**, and the log must be shared. Sigil provides two options: a self-hosted **Sigil LogServer** and integration with **Sigstore Rekor**.
+
+### The problem remote logs solve
+
+A local log answers: "What did *I* sign?" A remote log answers: "What did *anyone* sign, and can the log operator prove they haven't tampered with it?"
+
+Remote logs add:
+
+- **Third-party auditability** — anyone can verify the log's integrity, not just the signer
+- **Signed checkpoints** — the log server signs the Merkle root, creating a cryptographic commitment
+- **Inclusion proofs** — verifiers can confirm a signature entry exists in the log without trusting the server
+- **Policy enforcement** — verifiers can reject signatures that weren't logged
+
+### Sign and log in one step
+
+Add `--log-url` to any sign command to submit the signature to a remote log after signing:
+
+```
+sigil sign release.tar.gz --key mykey.pem --log-url https://log.example.com --log-api-key secret123
+```
+
+```
+Signed: release.tar.gz
+Logged: https://log.example.com (index 1)
+```
+
+The transparency receipt is embedded in the signature envelope:
+
+```json
+{
+  "transparencyLogUrl": "https://log.example.com",
+  "transparencyLogIndex": 1,
+  "transparencySignedCheckpoint": "base64...",
+  "transparencyInclusionProof": {
+    "leafIndex": 0,
+    "treeSize": 1,
+    "rootHash": "a1b2c3d4...",
+    "hashes": []
+  }
+}
+```
+
+Log submission is best-effort — if the log server is unreachable, signing still succeeds with a warning. This matches the behavior of `--timestamp`.
+
+The `--log-url` and `--log-api-key` options are available on `sign`, `sign-manifest`, and `sign-image`.
+
+### Enforce logging with policy
+
+Require that all verified signatures have a transparency log receipt:
+
+```json
+{
+  "rules": [
+    { "require": "logged" }
+  ]
+}
+```
+
+```
+sigil verify release.tar.gz --policy policy.json
+```
+
+For stronger assurance, verify the log's signed checkpoint cryptographically:
+
+```json
+{
+  "rules": [
+    { "require": "logged", "logPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE..." }
+  ]
+}
+```
+
+The `logPublicKey` is the log server's ECDSA signing key in base64-encoded SPKI format. Retrieve it from a running server at `GET /api/v1/log/publicKey`.
+
+### Running the Sigil LogServer
+
+The Sigil LogServer is a standalone ASP.NET Core application. It is **not** embedded in the `sigil` CLI tool.
+
+**Start with a dev certificate (development/testing):**
+
+```
+dotnet run --project src/Sigil.LogServer -- \
+  --dev-cert \
+  --db sigil-log.db \
+  --key server-signing.pem \
+  --api-key your-secret-key
+```
+
+**Start with a production TLS certificate:**
+
+```
+dotnet run --project src/Sigil.LogServer -- \
+  --cert server.crt \
+  --cert-key server.key \
+  --db sigil-log.db \
+  --key server-signing.pem \
+  --api-key your-secret-key
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--cert` | Yes* | TLS certificate PEM file |
+| `--cert-key` | Yes* | TLS private key PEM file |
+| `--dev-cert` | Yes* | Use ASP.NET Core dev certificate instead of `--cert`/`--cert-key` |
+| `--db` | No | SQLite database path (default: `sigil-log.db`) |
+| `--key` | Yes | Server signing key PEM (ECDSA, signs checkpoints) |
+| `--api-key` | Yes | API key for write operations (POST endpoints) |
+| `--db-provider` | No | Database provider: `sqlite` (default), `sqlserver`, `postgres` |
+| `--connection-string` | No | Connection string for SQL Server or PostgreSQL |
+| `--mtls-ca` | No | CA certificate PEM for mutual TLS client verification |
+| `--port` | No | HTTPS port (default: 5199) |
+
+*One of `--cert`/`--cert-key` or `--dev-cert` is required. HTTPS is mandatory — the server refuses to start without TLS configuration.
+
+The server signing key (`--key`) is an ECDSA key used to sign Merkle tree checkpoints. Generate one with:
+
+```
+sigil generate -o server-signing
+```
+
+### Database providers
+
+**SQLite** (default) — zero-configuration, single-file database:
+
+```
+dotnet run --project src/Sigil.LogServer -- --dev-cert --db sigil-log.db --key server.pem --api-key secret
+```
+
+**SQL Server** — for enterprise deployments:
+
+```
+dotnet run --project src/Sigil.LogServer -- --dev-cert --db-provider sqlserver \
+  --connection-string "Server=localhost;Database=sigil_log;Trusted_Connection=True;" \
+  --key server.pem --api-key secret
+```
+
+**PostgreSQL** — for cloud-native deployments:
+
+```
+dotnet run --project src/Sigil.LogServer -- --dev-cert --db-provider postgres \
+  --connection-string "Host=localhost;Database=sigil_log;Username=sigil;Password=pass;" \
+  --key server.pem --api-key secret
+```
+
+All providers create tables automatically on first start. The schema is provider-agnostic — the same logical structure is used across all three.
+
+### mTLS (mutual TLS)
+
+For environments requiring client certificate authentication (defense-in-depth on top of API keys):
+
+```
+dotnet run --project src/Sigil.LogServer -- \
+  --cert server.crt \
+  --cert-key server.key \
+  --mtls-ca ca.pem \
+  --db sigil-log.db \
+  --key server.pem \
+  --api-key secret
+```
+
+When `--mtls-ca` is set, the server requires clients to present a certificate signed by the specified CA. Both mTLS and API key are checked — either one failing rejects the request.
+
+### Querying the log server
+
+The server exposes read-only endpoints without authentication:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/log/entries?limit=N&offset=M` | List entries (paginated) |
+| GET | `/api/v1/log/entries/{index}` | Get a single entry |
+| POST | `/api/v1/log/search` | Search by keyId, artifact name, or digest |
+| GET | `/api/v1/log/checkpoint` | Get the current signed checkpoint |
+| GET | `/api/v1/log/proof/inclusion/{index}` | Get an inclusion proof for an entry |
+| GET | `/api/v1/log/proof/consistency?oldSize=N` | Get a consistency proof |
+| GET | `/api/v1/log/publicKey` | Get the server's signing public key |
+
+Write operations require the `X-Api-Key` header:
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/log/entries` | `X-Api-Key` | Submit a new log entry |
+
+### Rekor integration
+
+Submit signatures to [Sigstore Rekor](https://rekor.sigstore.dev) instead of a self-hosted server:
+
+```
+sigil sign release.tar.gz --key mykey.pem --log-url rekor
+```
+
+This submits a `hashedrekord` entry to the public Rekor instance at `https://rekor.sigstore.dev`. No API key is needed.
+
+For a self-hosted Rekor instance:
+
+```
+sigil sign release.tar.gz --key mykey.pem --log-url rekor:https://rekor.internal.example.com
+```
+
+The `rekor:` prefix tells Sigil to use the Rekor API format instead of the Sigil server format.
+
+### How remote logging works
+
+**Post-sign submission.** After signing (and optional timestamping), Sigil submits the signature entry and subject descriptor to the remote log. The log server:
+
+1. Creates a leaf hash from the entry data (same `SHA-256(0x00 || data)` domain separation as the local log)
+2. Appends the entry to its database
+3. Recomputes the Merkle root over all entries
+4. Signs a checkpoint (tree size + root hash + timestamp) with the server's ECDSA key
+5. Returns a transparency receipt: log index, signed checkpoint, and inclusion proof
+
+**Inclusion proofs.** The receipt includes a Merkle inclusion proof — a list of sibling hashes that, combined with the leaf hash, reconstruct the root hash. This lets a verifier confirm the entry is in the log without downloading all entries.
+
+**Checkpoint signing.** The checkpoint payload is JCS-canonicalized (RFC 8785) before signing. The signature is appended to the base64-encoded checkpoint JSON, separated by a dot. Verifiers with the log's public key can cryptographically verify the checkpoint hasn't been tampered with.
+
+**Duplicate detection.** Each entry includes a SHA-256 digest of the signature bytes. The same signature cannot be logged twice.
+
+### Transparency receipt format
+
+The transparency fields on a `SignatureEntry` after remote logging:
+
+```json
+{
+  "transparencyLogUrl": "https://log.example.com",
+  "transparencyLogIndex": 42,
+  "transparencySignedCheckpoint": "eyJyb290SGFzaCI6Ii4uLiIsInRpbWVzdGFtcCI6Ii4uLiIsInRyZWVTaXplIjo0Mn0uPHNpZ25hdHVyZT4=",
+  "transparencyInclusionProof": {
+    "leafIndex": 42,
+    "treeSize": 100,
+    "rootHash": "a1b2c3d4e5f6...",
+    "hashes": [
+      "1111111111111111...",
+      "2222222222222222...",
+      "3333333333333333..."
+    ]
+  }
+}
+```
+
+The `transparencySignedCheckpoint` is a base64-encoded string containing the JSON checkpoint payload followed by a dot and the ECDSA signature. The `hashes` array in the inclusion proof contains the sibling hashes needed to reconstruct the Merkle root from the leaf.
+
+All transparency fields are nullable and omitted from the JSON when not present (`WhenWritingNull`). Existing envelopes without transparency fields continue to verify normally.
 
 ## Git commit signing
 
@@ -2720,7 +3028,7 @@ The audience binding prevents token reuse: an OIDC token acquired for one epheme
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
-sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
+sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil attest <file> --predicate <json> --type <type> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
@@ -2742,9 +3050,9 @@ sigil log proof [--log <path>] [--index <n>] [--old-size <m>]
 sigil discover well-known <domain> [-o path]
 sigil discover dns <domain> [-o path]
 sigil discover git <url> [-o path]
-sigil sign-image <image> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--passphrase "pass"] [--algorithm name] [--label "name"] [--timestamp <tsa-url>]
+sigil sign-image <image> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--passphrase "pass"] [--algorithm name] [--label "name"] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify-image <image> [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil sign-manifest <path> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
+sigil sign-manifest <path> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify-manifest <manifest> [--base-path path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil git config --key <private.pem> | --vault <provider> --vault-key <reference> [--global] [--passphrase "pass"]
 ```
@@ -2765,6 +3073,8 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 - `--oidc-token` provides a manual OIDC JWT (requires `--keyless`); without it, the token is acquired from GitHub Actions or GitLab CI
 - `--algorithm` only applies to ephemeral and keyless modes (default: `ecdsa-p256`)
 - `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (non-fatal on failure)
+- `--log-url` submits the signature to a remote transparency log after signing (non-fatal on failure). Use `rekor` for Sigstore Rekor, or `rekor:https://...` for a self-hosted Rekor instance
+- `--log-api-key` provides the API key for Sigil LogServer write operations (not needed for Rekor)
 - SBOM format is auto-detected for CycloneDX and SPDX JSON files
 
 **attest**: Create a DSSE attestation for a file. Three signing modes (same as `sign`):
@@ -2863,6 +3173,8 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 - `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
 - `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
 - `--label` attaches a label to the signature
+- `--log-url` submits the signature to a remote transparency log (non-fatal on failure)
+- `--log-api-key` provides the API key for Sigil LogServer write operations
 - Registry authentication is resolved automatically (see [Registry authentication](#registry-authentication))
 
 **verify-image**: Verify signatures on an OCI container image.
@@ -2881,6 +3193,8 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 - `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
 - `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
 - `--label` attaches a label to the signature
+- `--log-url` submits the signature to a remote transparency log (non-fatal on failure)
+- `--log-api-key` provides the API key for Sigil LogServer write operations
 - If `--output` points to an existing `.manifest.sig.json`, the new signature is appended
 - SBOM format is auto-detected per file for CycloneDX and SPDX JSON files
 
@@ -3070,8 +3384,6 @@ sign:
 
 ## What's coming
 
-- **Remote transparency log** — HTTP API for shared/public signing audit logs beyond the local Merkle tree.
-- **Native AOT / self-contained binaries** — Single-binary distribution without requiring the .NET SDK.
 - **Archive/recursive signing** — Sign individual entries inside ZIP, tar.gz, and NuGet packages with an embedded manifest.
 - **Authenticode integration** — Embed Authenticode signatures in PE binaries for Windows OS-level trust recognition.
 - **Ed25519** — When the .NET SDK ships the native API.
