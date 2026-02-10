@@ -11,4 +11,5 @@ public sealed class PolicyContext
     public InTotoStatement? Statement { get; init; }
     public string? ArtifactName { get; init; }
     public string? BasePath { get; init; }
+    public ManifestEnvelope? ManifestEnvelope { get; init; }
 }

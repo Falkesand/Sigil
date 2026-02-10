@@ -31,6 +31,8 @@ rootCommand.Add(LogCommand.Create());
 rootCommand.Add(GitCommand.Create());
 rootCommand.Add(SignImageCommand.Create());
 rootCommand.Add(VerifyImageCommand.Create());
+rootCommand.Add(SignManifestCommand.Create());
+rootCommand.Add(VerifyManifestCommand.Create());
 
 var config = new CommandLineConfiguration(rootCommand);
 return await config.InvokeAsync(args);
