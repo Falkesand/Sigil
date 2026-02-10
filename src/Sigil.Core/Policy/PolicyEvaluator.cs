@@ -28,6 +28,7 @@ public static class PolicyEvaluator
             "label" => RuleEvaluator.EvaluateLabel(rule, context),
             "trusted" => RuleEvaluator.EvaluateTrusted(rule, context),
             "key" => RuleEvaluator.EvaluateKey(rule, context),
+            "logged" => RuleEvaluator.EvaluateLogged(rule, context),
             _ => new RuleResult
             {
                 RuleName = rule.Require,

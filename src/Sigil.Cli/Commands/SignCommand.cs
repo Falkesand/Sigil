@@ -5,6 +5,7 @@ using Sigil.Keyless;
 using Sigil.Keys;
 using Sigil.Signing;
 using Sigil.Timestamping;
+using Sigil.Transparency.Remote;
 
 namespace Sigil.Cli.Commands;
 
@@ -23,6 +24,10 @@ public static class SignCommand
         var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
         var keylessOption = new Option<bool>("--keyless") { Description = "Use keyless/OIDC signing with ephemeral keys" };
         var oidcTokenOption = new Option<string?>("--oidc-token") { Description = "OIDC token for keyless signing (auto-detected from CI if omitted)" };
+        var logUrlOption = new Option<string?>("--log-url") { Description = "Remote transparency log URL, or 'rekor' for Sigstore public log" };
+        var logApiKeyOption = new Option<string?>("--log-api-key") { Description = "API key for Sigil log server (not needed for Rekor)" };
+        var certStoreOption = new Option<string?>("--cert-store") { Description = "Certificate thumbprint for Windows Certificate Store" };
+        var storeLocationOption = new Option<string?>("--store-location") { Description = "Store location: CurrentUser (default) or LocalMachine" };
 
         var cmd = new Command("sign", "Sign an artifact and produce a detached signature envelope");
         cmd.Add(artifactArg);
@@ -36,6 +41,10 @@ public static class SignCommand
         cmd.Add(timestampOption);
         cmd.Add(keylessOption);
         cmd.Add(oidcTokenOption);
+        cmd.Add(logUrlOption);
+        cmd.Add(logApiKeyOption);
+        cmd.Add(certStoreOption);
+        cmd.Add(storeLocationOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -50,6 +59,10 @@ public static class SignCommand
             var tsaUrl = parseResult.GetValue(timestampOption);
             var keyless = parseResult.GetValue(keylessOption);
             var oidcToken = parseResult.GetValue(oidcTokenOption);
+            var logUrl = parseResult.GetValue(logUrlOption);
+            var logApiKey = parseResult.GetValue(logApiKeyOption);
+            var certStoreThumbprint = parseResult.GetValue(certStoreOption);
+            var storeLocationName = parseResult.GetValue(storeLocationOption);
 
             if (!artifact.Exists)
             {
@@ -67,6 +80,30 @@ public static class SignCommand
             if (keyless && vaultName is not null)
             {
                 Console.Error.WriteLine("Cannot use both --keyless and --vault. Choose one signing method.");
+                return;
+            }
+
+            if (keyless && certStoreThumbprint is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --keyless and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (certStoreThumbprint is not null && keyPath is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --key and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (certStoreThumbprint is not null && vaultName is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --vault and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (storeLocationName is not null && certStoreThumbprint is null)
+            {
+                Console.Error.WriteLine("--store-location requires --cert-store.");
                 return;
             }
 
@@ -137,6 +174,7 @@ public static class SignCommand
                     artifact.FullName, keylessSigner, label);
 
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -179,6 +217,7 @@ public static class SignCommand
                 var envelope = await LoadOrCreateEnvelopeAsync(artifact, outputPath, signer, fingerprint, label);
 
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -193,13 +232,54 @@ public static class SignCommand
                 return;
             }
 
-            // Local signing paths (PEM or ephemeral)
+            // Certificate store signing path (Windows only)
+            if (certStoreThumbprint is not null)
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.Error.WriteLine("--cert-store is only supported on Windows.");
+                    return;
+                }
+                var storeLocation = storeLocationName is not null
+                    ? Enum.Parse<System.Security.Cryptography.X509Certificates.StoreLocation>(storeLocationName, ignoreCase: true)
+                    : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
+                await using var certProvider = new CertStoreKeyProvider(storeLocation);
+                var signerResult = await certProvider.GetSignerAsync(certStoreThumbprint);
+                if (!signerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Certificate store error: {signerResult.ErrorMessage}");
+                    return;
+                }
+
+                using var signer = signerResult.Value;
+                var fingerprint = KeyFingerprint.Compute(signer.PublicKey);
+
+                var outputPath = output ?? artifact.FullName + ".sig.json";
+                var envelope = await LoadOrCreateEnvelopeAsync(artifact, outputPath, signer, fingerprint, label);
+
+                await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
+
+                var json = ArtifactSigner.Serialize(envelope);
+                File.WriteAllText(outputPath, json);
+
+                Console.WriteLine($"Signed: {artifact.Name}");
+                Console.WriteLine($"Algorithm: {signer.Algorithm.ToCanonicalName()}");
+                Console.WriteLine($"Key: {fingerprint.ShortId}...");
+                Console.WriteLine("Mode: cert-store");
+                if (envelope.Subject.Metadata?.TryGetValue("sbom.format", out var certSbomFormat) == true)
+                    Console.WriteLine($"Format: {certSbomFormat} ({envelope.Subject.MediaType})");
+                Console.WriteLine($"Signature: {outputPath}");
+                return;
+            }
+
+            // Local signing paths (PEM, PFX, or ephemeral)
             ISigner localSigner;
             bool isEphemeral;
 
             if (keyPath is not null)
             {
-                var loadResult = PemSignerLoader.Load(keyPath, passphrase, algorithmName);
+                var loadResult = KeyLoader.Load(keyPath, passphrase, algorithmName);
                 if (!loadResult.IsSuccess)
                 {
                     Console.Error.WriteLine(loadResult.ErrorMessage);
@@ -237,6 +317,7 @@ public static class SignCommand
                 var envelope = LoadOrCreateEnvelope(artifact, outputPath, localSigner, fingerprint, label);
 
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -312,5 +393,40 @@ public static class SignCommand
         }
 
         return await ArtifactSigner.SignAsync(artifact.FullName, signer, fingerprint, label).ConfigureAwait(false);
+    }
+
+    private static async Task SubmitToLogIfRequestedAsync(
+        SignatureEnvelope envelope, string? logUrl, string? logApiKey)
+    {
+        if (logUrl is null)
+            return;
+
+        IRemoteLog remoteLog;
+        try
+        {
+            remoteLog = RemoteLogFactory.Create(logUrl, logApiKey);
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine($"Warning: {ex.Message} Signature saved without log entry.");
+            return;
+        }
+
+        using (remoteLog)
+        {
+            var lastEntry = envelope.Signatures[^1];
+            var result = await LogSubmitter.SubmitAsync(
+                lastEntry, envelope.Subject, remoteLog).ConfigureAwait(false);
+
+            if (result.IsSuccess)
+            {
+                envelope.Signatures[^1] = result.Value;
+                Console.WriteLine($"Logged: {remoteLog.LogUrl} (index {result.Value.TransparencyLogIndex})");
+            }
+            else
+            {
+                Console.Error.WriteLine($"Warning: Log submission failed ({result.ErrorMessage}). Signature saved without log entry.");
+            }
+        }
     }
 }

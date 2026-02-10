@@ -205,4 +205,85 @@ public class SignerFactoryTests
             () => SignerFactory.CreateFromPem(
                 encryptedPem.AsSpan(), passphrase.AsSpan(), SigningAlgorithm.Rsa));
     }
+
+    [Fact]
+    public void CreateFromPkcs8Der_NullInput_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() => SignerFactory.CreateFromPkcs8Der(null!));
+    }
+
+    [Fact]
+    public void CreateFromPkcs8Der_EmptyInput_ThrowsArgumentException()
+    {
+        Assert.Throws<ArgumentException>(() => SignerFactory.CreateFromPkcs8Der([]));
+    }
+
+    [Fact]
+    public void CreateFromPkcs8Der_ECDsaP256_RoundTrip()
+    {
+        using var original = ECDsaP256Signer.Generate();
+        var derBytes = original.ExportPkcs8();
+        var data = Encoding.UTF8.GetBytes("pkcs8-der-p256-roundtrip");
+
+        using var restored = SignerFactory.CreateFromPkcs8Der(derBytes);
+
+        Assert.Equal(SigningAlgorithm.ECDsaP256, restored.Algorithm);
+        var signature = restored.Sign(data);
+        using var verifier = ECDsaP256Verifier.FromPublicKey(original.PublicKey);
+        Assert.True(verifier.Verify(data, signature));
+    }
+
+    [Fact]
+    public void CreateFromPkcs8Der_ECDsaP384_RoundTrip()
+    {
+        using var original = ECDsaP384Signer.Generate();
+        var derBytes = original.ExportPkcs8();
+
+        using var restored = SignerFactory.CreateFromPkcs8Der(derBytes);
+
+        Assert.Equal(SigningAlgorithm.ECDsaP384, restored.Algorithm);
+    }
+
+    [Fact]
+    public void CreateFromPkcs8Der_ECDsaP521_RoundTrip()
+    {
+        using var original = ECDsaP521Signer.Generate();
+        var derBytes = original.ExportPkcs8();
+
+        using var restored = SignerFactory.CreateFromPkcs8Der(derBytes);
+
+        Assert.Equal(SigningAlgorithm.ECDsaP521, restored.Algorithm);
+    }
+
+    [Fact]
+    public void CreateFromPkcs8Der_Rsa_RoundTrip()
+    {
+        using var original = RsaSigner.Generate();
+        var derBytes = original.ExportPkcs8();
+        var data = Encoding.UTF8.GetBytes("pkcs8-der-rsa-roundtrip");
+
+        using var restored = SignerFactory.CreateFromPkcs8Der(derBytes);
+
+        Assert.Equal(SigningAlgorithm.Rsa, restored.Algorithm);
+        var signature = restored.Sign(data);
+        using var verifier = RsaVerifier.FromPublicKey(original.PublicKey);
+        Assert.True(verifier.Verify(data, signature));
+    }
+
+    [Fact]
+    public void CreateFromPkcs8Pem_StillWorksAfterRefactor()
+    {
+        // Verifies that the refactored CreateFromPkcs8Pem (which now calls CreateFromPkcs8Der)
+        // still produces correct results
+        using var original = ECDsaP256Signer.Generate();
+        var pem = original.ExportPrivateKeyPem();
+        var data = Encoding.UTF8.GetBytes("refactor-compat-test");
+
+        using var restored = SignerFactory.CreateFromPem(pem.AsSpan());
+
+        Assert.Equal(SigningAlgorithm.ECDsaP256, restored.Algorithm);
+        var signature = restored.Sign(data);
+        using var verifier = ECDsaP256Verifier.FromPublicKey(original.PublicKey);
+        Assert.True(verifier.Verify(data, signature));
+    }
 }

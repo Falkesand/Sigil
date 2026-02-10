@@ -1,6 +1,7 @@
 using System.CommandLine;
 using Sigil.Cli.Vault;
 using Sigil.Crypto;
+using Sigil.Keys;
 using Sigil.Trust;
 
 namespace Sigil.Cli.Commands;
@@ -16,6 +17,8 @@ public static class TrustSignCommand
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Algorithm hint for encrypted PEM detection (ecdsa-p256, ecdsa-p384, ecdsa-p521, rsa-pss-sha256, ml-dsa-65)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
+        var certStoreOption = new Option<string?>("--cert-store") { Description = "Certificate thumbprint for Windows Certificate Store" };
+        var storeLocationOption = new Option<string?>("--store-location") { Description = "Store location: CurrentUser (default) or LocalMachine" };
 
         var cmd = new Command("sign", "Sign a trust bundle with an authority key");
         cmd.Add(bundleArg);
@@ -25,6 +28,8 @@ public static class TrustSignCommand
         cmd.Add(algorithmOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
+        cmd.Add(certStoreOption);
+        cmd.Add(storeLocationOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -35,6 +40,8 @@ public static class TrustSignCommand
             var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
+            var certStoreThumbprint = parseResult.GetValue(certStoreOption);
+            var storeLocationName = parseResult.GetValue(storeLocationOption);
 
             if (!bundleFile.Exists)
             {
@@ -49,9 +56,9 @@ public static class TrustSignCommand
                 return;
             }
 
-            if (vaultName is null && keyPath is null)
+            if (vaultName is null && keyPath is null && certStoreThumbprint is null)
             {
-                Console.Error.WriteLine("Either --key or --vault is required.");
+                Console.Error.WriteLine("Either --key, --vault, or --cert-store is required.");
                 return;
             }
 
@@ -64,6 +71,24 @@ public static class TrustSignCommand
             if (vaultKey is not null && vaultName is null)
             {
                 Console.Error.WriteLine("--vault is required when using --vault-key.");
+                return;
+            }
+
+            if (certStoreThumbprint is not null && keyPath is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --key and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (certStoreThumbprint is not null && vaultName is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --vault and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (storeLocationName is not null && certStoreThumbprint is null)
+            {
+                Console.Error.WriteLine("--store-location requires --cert-store.");
                 return;
             }
 
@@ -123,8 +148,51 @@ public static class TrustSignCommand
                 return;
             }
 
+            // Certificate store signing path (Windows only)
+            if (certStoreThumbprint is not null)
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.Error.WriteLine("--cert-store is only supported on Windows.");
+                    return;
+                }
+                var storeLocation = storeLocationName is not null
+                    ? Enum.Parse<System.Security.Cryptography.X509Certificates.StoreLocation>(storeLocationName, ignoreCase: true)
+                    : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
+                await using var certProvider = new CertStoreKeyProvider(storeLocation);
+                var signerResult = await certProvider.GetSignerAsync(certStoreThumbprint);
+                if (!signerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Certificate store error: {signerResult.ErrorMessage}");
+                    return;
+                }
+
+                using var certSigner = signerResult.Value;
+
+                var signResult = await BundleSigner.SignAsync(bundle, certSigner);
+                if (!signResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Failed to sign bundle: {signResult.ErrorMessage}");
+                    return;
+                }
+
+                var outputPath = output ?? bundleFile.FullName;
+                var serializeResult = BundleSigner.Serialize(signResult.Value);
+                if (!serializeResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Failed to serialize bundle: {serializeResult.ErrorMessage}");
+                    return;
+                }
+
+                File.WriteAllText(outputPath, serializeResult.Value);
+                Console.WriteLine($"Signed bundle: {outputPath}");
+                Console.WriteLine($"Authority: {signResult.Value.Signature!.KeyId}");
+                Console.WriteLine($"Mode: cert-store");
+                return;
+            }
+
             // Local PEM signing path
-            var loadResult = PemSignerLoader.Load(keyPath!, passphrase, algorithmName);
+            var loadResult = KeyLoader.Load(keyPath!, passphrase, algorithmName);
             if (!loadResult.IsSuccess)
             {
                 Console.Error.WriteLine(loadResult.ErrorMessage);

@@ -4,6 +4,7 @@ using Sigil.Crypto;
 using Sigil.Keys;
 using Sigil.Signing;
 using Sigil.Timestamping;
+using Sigil.Transparency.Remote;
 
 namespace Sigil.Cli.Commands;
 
@@ -19,8 +20,12 @@ public static class SignManifestCommand
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ephemeral default: ecdsa-p256)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
+        var certStoreOption = new Option<string?>("--cert-store") { Description = "Certificate thumbprint for Windows Certificate Store" };
+        var storeLocationOption = new Option<string?>("--store-location") { Description = "Store location: CurrentUser (default) or LocalMachine" };
         var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
         var includeOption = new Option<string?>("--include") { Description = "Glob filter for files (e.g. *.dll)" };
+        var logUrlOption = new Option<string?>("--log-url") { Description = "Remote transparency log URL, or 'rekor' for Sigstore public log" };
+        var logApiKeyOption = new Option<string?>("--log-api-key") { Description = "API key for Sigil log server (not needed for Rekor)" };
 
         var cmd = new Command("sign-manifest", "Sign multiple files with a shared manifest signature");
         cmd.Add(pathArg);
@@ -31,8 +36,12 @@ public static class SignManifestCommand
         cmd.Add(algorithmOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
+        cmd.Add(certStoreOption);
+        cmd.Add(storeLocationOption);
         cmd.Add(timestampOption);
         cmd.Add(includeOption);
+        cmd.Add(logUrlOption);
+        cmd.Add(logApiKeyOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -44,8 +53,12 @@ public static class SignManifestCommand
             var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
+            var certStoreThumbprint = parseResult.GetValue(certStoreOption);
+            var storeLocationName = parseResult.GetValue(storeLocationOption);
             var tsaUrl = parseResult.GetValue(timestampOption);
             var includeFilter = parseResult.GetValue(includeOption);
+            var logUrl = parseResult.GetValue(logUrlOption);
+            var logApiKey = parseResult.GetValue(logApiKeyOption);
 
             // Resolve files from path
             var (basePath, filePaths) = ResolveFiles(path, includeFilter);
@@ -77,6 +90,24 @@ public static class SignManifestCommand
                 return;
             }
 
+            if (certStoreThumbprint is not null && keyPath is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --key and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (certStoreThumbprint is not null && vaultName is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --vault and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (storeLocationName is not null && certStoreThumbprint is null)
+            {
+                Console.Error.WriteLine("--store-location requires --cert-store.");
+                return;
+            }
+
             var outputPath = output ?? Path.Combine(basePath, "manifest.sig.json");
 
             // Vault signing path
@@ -105,11 +136,45 @@ public static class SignManifestCommand
 
                 var envelope = await SignOrAppendAsync(basePath, filePaths, outputPath, signer, fingerprint, label);
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ManifestSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
 
                 WriteOutput(envelope, outputPath, signer, fingerprint, $"vault ({vaultName})");
+                return;
+            }
+
+            // Certificate store signing path (Windows only)
+            if (certStoreThumbprint is not null)
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.Error.WriteLine("--cert-store is only supported on Windows.");
+                    return;
+                }
+                var storeLocation = storeLocationName is not null
+                    ? Enum.Parse<System.Security.Cryptography.X509Certificates.StoreLocation>(storeLocationName, ignoreCase: true)
+                    : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
+                await using var certProvider = new CertStoreKeyProvider(storeLocation);
+                var signerResult = await certProvider.GetSignerAsync(certStoreThumbprint);
+                if (!signerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Certificate store error: {signerResult.ErrorMessage}");
+                    return;
+                }
+
+                using var certSigner = signerResult.Value;
+                var fingerprint = KeyFingerprint.Compute(certSigner.PublicKey);
+
+                var envelope = await SignOrAppendAsync(basePath, filePaths, outputPath, certSigner, fingerprint, label);
+                await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
+
+                var json = ManifestSigner.Serialize(envelope);
+                File.WriteAllText(outputPath, json);
+
+                WriteOutput(envelope, outputPath, certSigner, fingerprint, "cert-store");
                 return;
             }
 
@@ -119,7 +184,7 @@ public static class SignManifestCommand
 
             if (keyPath is not null)
             {
-                var loadResult = PemSignerLoader.Load(keyPath, passphrase, algorithmName);
+                var loadResult = KeyLoader.Load(keyPath, passphrase, algorithmName);
                 if (!loadResult.IsSuccess)
                 {
                     Console.Error.WriteLine(loadResult.ErrorMessage);
@@ -154,6 +219,7 @@ public static class SignManifestCommand
 
                 var envelope = SignOrAppend(basePath, filePaths, outputPath, localSigner, fingerprint, label);
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ManifestSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -258,5 +324,42 @@ public static class SignManifestCommand
         if (mode.Contains("ephemeral", StringComparison.Ordinal))
             Console.WriteLine($"Mode: {mode}");
         Console.WriteLine($"Output: {outputPath}");
+    }
+
+    private static async Task SubmitToLogIfRequestedAsync(
+        ManifestEnvelope envelope, string? logUrl, string? logApiKey)
+    {
+        if (logUrl is null)
+            return;
+
+        IRemoteLog remoteLog;
+        try
+        {
+            remoteLog = RemoteLogFactory.Create(logUrl, logApiKey);
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine($"Warning: {ex.Message} Manifest saved without log entry.");
+            return;
+        }
+
+        using (remoteLog)
+        {
+            var lastEntry = envelope.Signatures[^1];
+            // Use first subject as representative for the log entry
+            var subject = envelope.Subjects[0];
+            var result = await LogSubmitter.SubmitAsync(
+                lastEntry, subject, remoteLog).ConfigureAwait(false);
+
+            if (result.IsSuccess)
+            {
+                envelope.Signatures[^1] = result.Value;
+                Console.WriteLine($"Logged: {remoteLog.LogUrl} (index {result.Value.TransparencyLogIndex})");
+            }
+            else
+            {
+                Console.Error.WriteLine($"Warning: Log submission failed ({result.ErrorMessage}). Manifest saved without log entry.");
+            }
+        }
     }
 }

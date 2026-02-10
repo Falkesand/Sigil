@@ -1,9 +1,10 @@
 namespace Sigil.Cli.Commands;
 
-public enum PemLoadErrorKind
+public enum KeyLoadErrorKind
 {
     FileNotFound,
     UnknownAlgorithm,
     PassphraseRequired,
-    CryptoError
+    CryptoError,
+    UnsupportedFormat
 }

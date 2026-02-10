@@ -4,7 +4,7 @@ using System.Text;
 namespace Sigil.Crypto;
 
 /// <summary>
-/// Factory for creating signers. Supports generation and auto-detection from PEM files.
+/// Factory for creating signers. Supports generation, auto-detection from PEM files, and PKCS#8 DER bytes.
 /// </summary>
 public static class SignerFactory
 {
@@ -22,6 +22,30 @@ public static class SignerFactory
         SigningAlgorithm.MLDsa65 => MLDsa65Signer.Generate(),
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
     };
+
+    /// <summary>
+    /// Creates a signer from DER-encoded PKCS#8 private key bytes, auto-detecting the algorithm.
+    /// </summary>
+    public static ISigner CreateFromPkcs8Der(byte[] pkcs8Der)
+    {
+        ArgumentNullException.ThrowIfNull(pkcs8Der);
+        if (pkcs8Der.Length == 0)
+            throw new ArgumentException("PKCS#8 DER bytes cannot be empty.", nameof(pkcs8Der));
+
+        var algorithm = AlgorithmDetector.DetectFromPkcs8Der(pkcs8Der);
+
+        return algorithm switch
+        {
+            SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.FromPkcs8(pkcs8Der),
+            SigningAlgorithm.ECDsaP384 => ECDsaP384Signer.FromPkcs8(pkcs8Der),
+            SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.FromPkcs8(pkcs8Der),
+            SigningAlgorithm.Rsa => RsaSigner.FromPkcs8(pkcs8Der),
+            SigningAlgorithm.Ed25519 => throw new NotSupportedException(
+                "Ed25519 is not yet available in this .NET SDK."),
+            SigningAlgorithm.MLDsa65 => MLDsa65Signer.FromPkcs8(pkcs8Der),
+            _ => throw new NotSupportedException($"Unsupported algorithm: {algorithm}")
+        };
+    }
 
     /// <summary>
     /// Creates a signer from a PEM-encoded private key, auto-detecting the algorithm.
@@ -69,8 +93,7 @@ public static class SignerFactory
 
     private static ISigner CreateFromPkcs8Pem(ReadOnlySpan<char> pem)
     {
-        // Parse the PKCS#8 DER to detect the algorithm OID
-        // Import into a temporary key to get the DER bytes
+        // Extract base64 content from PEM, decode to DER, and delegate
         var pemString = pem.ToString();
         var lines = pemString.Split('\n');
         var base64Builder = new StringBuilder();
@@ -83,19 +106,14 @@ public static class SignerFactory
         }
 
         var derBytes = Convert.FromBase64String(base64Builder.ToString());
-        var algorithm = AlgorithmDetector.DetectFromPkcs8Der(derBytes);
-
-        return algorithm switch
+        try
         {
-            SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.FromPem(pem),
-            SigningAlgorithm.ECDsaP384 => ECDsaP384Signer.FromPem(pem),
-            SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.FromPem(pem),
-            SigningAlgorithm.Rsa => RsaSigner.FromPem(pem),
-            SigningAlgorithm.Ed25519 => throw new NotSupportedException(
-                "Ed25519 is not yet available in this .NET SDK."),
-            SigningAlgorithm.MLDsa65 => MLDsa65Signer.FromPem(pem),
-            _ => throw new NotSupportedException($"Unsupported algorithm: {algorithm}")
-        };
+            return CreateFromPkcs8Der(derBytes);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(derBytes);
+        }
     }
 
     private static ISigner CreateEcSignerFromPem(ReadOnlySpan<char> pem)

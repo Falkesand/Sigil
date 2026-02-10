@@ -47,7 +47,11 @@ public static class TimestampApplier
                 TimestampToken = Convert.ToBase64String(result.Value),
                 OidcToken = entry.OidcToken,
                 OidcIssuer = entry.OidcIssuer,
-                OidcIdentity = entry.OidcIdentity
+                OidcIdentity = entry.OidcIdentity,
+                TransparencyLogUrl = entry.TransparencyLogUrl,
+                TransparencyLogIndex = entry.TransparencyLogIndex,
+                TransparencySignedCheckpoint = entry.TransparencySignedCheckpoint,
+                TransparencyInclusionProof = entry.TransparencyInclusionProof
             };
 
             return TimestampResult<SignatureEntry>.Ok(timestampedEntry);

@@ -7,6 +7,7 @@ using Sigil.Git;
 using Sigil.Keys;
 using Sigil.Signing;
 using Sigil.Vault;
+using StoreLocation = System.Security.Cryptography.X509Certificates.StoreLocation;
 
 namespace Sigil.Cli.Commands;
 
@@ -36,7 +37,7 @@ public static class GitSignProgram
         // Parse args after "git-sign"
         var parsed = ParseArgs(args.AsSpan(1));
 
-        // Validate mutual exclusivity: --key vs --vault/--vault-key
+        // Validate mutual exclusivity: --key vs --vault/--vault-key vs --cert-store
         if (parsed.KeyPath is not null && parsed.VaultName is not null)
         {
             stderr.WriteLine("Error: Cannot use both --key and --vault. Choose one signing method.");
@@ -55,14 +56,32 @@ public static class GitSignProgram
             return 1;
         }
 
+        if (parsed.CertStoreThumbprint is not null && parsed.KeyPath is not null)
+        {
+            stderr.WriteLine("Error: Cannot use both --key and --cert-store. Choose one signing method.");
+            return 1;
+        }
+
+        if (parsed.CertStoreThumbprint is not null && parsed.VaultName is not null)
+        {
+            stderr.WriteLine("Error: Cannot use both --vault and --cert-store. Choose one signing method.");
+            return 1;
+        }
+
+        if (parsed.StoreLocation is not null && parsed.CertStoreThumbprint is null)
+        {
+            stderr.WriteLine("Error: --store-location requires --cert-store.");
+            return 1;
+        }
+
         if (parsed.VerifyFile is not null)
         {
             return RunVerify(parsed, stdin, stdout, stderr);
         }
 
-        if (parsed.KeyPath is null && parsed.VaultName is null)
+        if (parsed.KeyPath is null && parsed.VaultName is null && parsed.CertStoreThumbprint is null)
         {
-            stderr.WriteLine("Error: --key or --vault/--vault-key required for git-sign.");
+            stderr.WriteLine("Error: --key, --vault/--vault-key, or --cert-store required for git-sign.");
             return 1;
         }
 
@@ -110,13 +129,36 @@ public static class GitSignProgram
 
                 signer = signerResult.Value;
             }
+            else if (parsed.CertStoreThumbprint is not null)
+            {
+                // Certificate store path (Windows only)
+                if (!OperatingSystem.IsWindows())
+                {
+                    stderr.WriteLine("Error: --cert-store is only supported on Windows.");
+                    return 1;
+                }
+
+                var storeLocation = parsed.StoreLocation is not null
+                    ? Enum.Parse<StoreLocation>(parsed.StoreLocation, ignoreCase: true)
+                    : StoreLocation.CurrentUser;
+
+                provider = new CertStoreKeyProvider(storeLocation);
+                var signerResult = await provider.GetSignerAsync(parsed.CertStoreThumbprint);
+                if (!signerResult.IsSuccess)
+                {
+                    stderr.WriteLine($"Error: {signerResult.ErrorMessage}");
+                    return 1;
+                }
+
+                signer = signerResult.Value;
+            }
             else
             {
-                // PEM path — resolve passphrase from arg or SIGIL_PASSPHRASE env var
+                // PEM/PFX path — resolve passphrase from arg or SIGIL_PASSPHRASE env var
                 var passphrase = parsed.Passphrase
                     ?? Environment.GetEnvironmentVariable("SIGIL_PASSPHRASE");
 
-                var loadResult = PemSignerLoader.Load(parsed.KeyPath!, passphrase, null);
+                var loadResult = KeyLoader.Load(parsed.KeyPath!, passphrase, null);
                 if (!loadResult.IsSuccess)
                 {
                     stderr.WriteLine($"Error: {loadResult.ErrorMessage}");
@@ -282,6 +324,8 @@ public static class GitSignProgram
         string? verifyFile = null;
         string? vaultName = null;
         string? vaultKey = null;
+        string? certStoreThumbprint = null;
+        string? storeLocation = null;
         int statusFd = 2;
 
         for (int i = 0; i < args.Length; i++)
@@ -325,6 +369,22 @@ public static class GitSignProgram
                 if (int.TryParse(arg["--status-fd=".Length..], CultureInfo.InvariantCulture, out var fd))
                     statusFd = fd;
             }
+            else if (arg.StartsWith("--cert-store=", StringComparison.OrdinalIgnoreCase))
+            {
+                certStoreThumbprint = arg["--cert-store=".Length..];
+            }
+            else if (string.Equals(arg, "--cert-store", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                certStoreThumbprint = args[++i];
+            }
+            else if (arg.StartsWith("--store-location=", StringComparison.OrdinalIgnoreCase))
+            {
+                storeLocation = arg["--store-location=".Length..];
+            }
+            else if (string.Equals(arg, "--store-location", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                storeLocation = args[++i];
+            }
             else if (string.Equals(arg, "--verify", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
                 verifyFile = args[++i];
@@ -332,7 +392,7 @@ public static class GitSignProgram
             // Ignore GPG-compat args: -bsau, -b, -s, -a, -u, and their values
         }
 
-        return new ParsedArgs(keyPath, passphrase, verifyFile, statusFd, vaultName, vaultKey);
+        return new ParsedArgs(keyPath, passphrase, verifyFile, statusFd, vaultName, vaultKey, certStoreThumbprint, storeLocation);
     }
 
     /// <summary>
@@ -366,5 +426,7 @@ public static class GitSignProgram
         string? VerifyFile,
         int StatusFd,
         string? VaultName,
-        string? VaultKey);
+        string? VaultKey,
+        string? CertStoreThumbprint,
+        string? StoreLocation);
 }

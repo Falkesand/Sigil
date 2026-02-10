@@ -23,6 +23,8 @@ public static class AttestCommand
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ephemeral default: ecdsa-p256)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference" };
+        var certStoreOption = new Option<string?>("--cert-store") { Description = "Certificate thumbprint for Windows Certificate Store" };
+        var storeLocationOption = new Option<string?>("--store-location") { Description = "Store location: CurrentUser (default) or LocalMachine" };
         var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
 
         var cmd = new Command("attest", "Create a DSSE attestation for an artifact");
@@ -35,6 +37,8 @@ public static class AttestCommand
         cmd.Add(algorithmOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
+        cmd.Add(certStoreOption);
+        cmd.Add(storeLocationOption);
         cmd.Add(timestampOption);
 
         cmd.SetAction(async parseResult =>
@@ -48,6 +52,8 @@ public static class AttestCommand
             var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
+            var certStoreThumbprint = parseResult.GetValue(certStoreOption);
+            var storeLocationName = parseResult.GetValue(storeLocationOption);
             var tsaUrl = parseResult.GetValue(timestampOption);
 
             if (!artifact.Exists)
@@ -106,6 +112,24 @@ public static class AttestCommand
                 return;
             }
 
+            if (certStoreThumbprint is not null && keyPath is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --key and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (certStoreThumbprint is not null && vaultName is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --vault and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (storeLocationName is not null && certStoreThumbprint is null)
+            {
+                Console.Error.WriteLine("--store-location requires --cert-store.");
+                return;
+            }
+
             var outputPath = output ?? artifact.FullName + ".att.json";
 
             // Create statement
@@ -143,13 +167,42 @@ public static class AttestCommand
                 return;
             }
 
+            // Certificate store signing path (Windows only)
+            if (certStoreThumbprint is not null)
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.Error.WriteLine("--cert-store is only supported on Windows.");
+                    return;
+                }
+                var storeLocation = storeLocationName is not null
+                    ? Enum.Parse<System.Security.Cryptography.X509Certificates.StoreLocation>(storeLocationName, ignoreCase: true)
+                    : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
+                await using var certProvider = new CertStoreKeyProvider(storeLocation);
+                var signerResult = await certProvider.GetSignerAsync(certStoreThumbprint);
+                if (!signerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Certificate store error: {signerResult.ErrorMessage}");
+                    return;
+                }
+
+                using var certSigner = signerResult.Value;
+                var fingerprint = KeyFingerprint.Compute(certSigner.PublicKey);
+
+                var envelope = await SignOrAppendAsync(outputPath, statement, certSigner, fingerprint);
+                await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+
+                WriteOutput(envelope, outputPath, artifact.Name, certSigner, fingerprint, "cert-store");
+                return;
+            }
+
             // Local signing paths (PEM or ephemeral)
             ISigner localSigner;
             bool isEphemeral;
 
             if (keyPath is not null)
             {
-                var loadResult = PemSignerLoader.Load(keyPath, passphrase, algorithmName);
+                var loadResult = KeyLoader.Load(keyPath, passphrase, algorithmName);
                 if (!loadResult.IsSuccess)
                 {
                     Console.Error.WriteLine(loadResult.ErrorMessage);
