@@ -1559,6 +1559,8 @@ projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVer
 
 Authentication uses Application Default Credentials: `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON), `gcloud auth application-default login`, Compute Engine / Cloud Run service account.
 
+**Supported algorithms:** ECDSA P-256, ECDSA P-384, RSA-PSS-SHA256. ECDSA P-521 is not supported by Google Cloud KMS.
+
 **Example:**
 
 ```
