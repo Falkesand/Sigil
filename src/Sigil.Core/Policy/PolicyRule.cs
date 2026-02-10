@@ -9,4 +9,5 @@ public sealed class PolicyRule
     public string? Bundle { get; set; }
     public string? Authority { get; set; }
     public List<string>? Fingerprints { get; set; }
+    public string? LogPublicKey { get; set; }
 }

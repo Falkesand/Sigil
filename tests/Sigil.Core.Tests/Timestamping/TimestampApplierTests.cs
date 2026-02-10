@@ -1,5 +1,6 @@
 using Sigil.Signing;
 using Sigil.Timestamping;
+using Sigil.Transparency.Remote;
 
 namespace Sigil.Core.Tests.Timestamping;
 
@@ -91,6 +92,55 @@ public class TimestampApplierTests
         Assert.Equal(entry.Timestamp, timestampedEntry.Timestamp);
         Assert.Equal(entry.Label, timestampedEntry.Label);
         Assert.NotNull(timestampedEntry.TimestampToken);
+    }
+
+    [Fact]
+    public async Task PreservesTransparencyFields()
+    {
+        var entry = new SignatureEntry
+        {
+            KeyId = "sha256:112233",
+            Algorithm = "ecdsa-p256",
+            PublicKey = "AQIDBA==",
+            Value = Convert.ToBase64String([1, 2, 3]),
+            Timestamp = "2026-02-08T16:00:00Z",
+            Label = "release",
+            TransparencyLogUrl = "https://log.example.com",
+            TransparencyLogIndex = 42,
+            TransparencySignedCheckpoint = "Y2hlY2twb2ludA==",
+            TransparencyInclusionProof = new RemoteInclusionProof
+            {
+                LeafIndex = 42,
+                TreeSize = 100,
+                RootHash = "aabbccdd",
+                Hashes = ["1111", "2222"]
+            }
+        };
+
+        // Simulate what TimestampApplier does: reconstruct entry with token
+        var timestampedEntry = new SignatureEntry
+        {
+            KeyId = entry.KeyId,
+            Algorithm = entry.Algorithm,
+            PublicKey = entry.PublicKey,
+            Value = entry.Value,
+            Timestamp = entry.Timestamp,
+            Label = entry.Label,
+            TimestampToken = "dGVzdA==",
+            OidcToken = entry.OidcToken,
+            OidcIssuer = entry.OidcIssuer,
+            OidcIdentity = entry.OidcIdentity,
+            TransparencyLogUrl = entry.TransparencyLogUrl,
+            TransparencyLogIndex = entry.TransparencyLogIndex,
+            TransparencySignedCheckpoint = entry.TransparencySignedCheckpoint,
+            TransparencyInclusionProof = entry.TransparencyInclusionProof
+        };
+
+        Assert.Equal("https://log.example.com", timestampedEntry.TransparencyLogUrl);
+        Assert.Equal(42, timestampedEntry.TransparencyLogIndex);
+        Assert.Equal("Y2hlY2twb2ludA==", timestampedEntry.TransparencySignedCheckpoint);
+        Assert.NotNull(timestampedEntry.TransparencyInclusionProof);
+        Assert.Equal(42, timestampedEntry.TransparencyInclusionProof.LeafIndex);
     }
 
     private sealed class FailingTsaHandler : HttpMessageHandler

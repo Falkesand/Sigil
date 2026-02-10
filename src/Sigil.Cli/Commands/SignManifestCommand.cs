@@ -4,6 +4,7 @@ using Sigil.Crypto;
 using Sigil.Keys;
 using Sigil.Signing;
 using Sigil.Timestamping;
+using Sigil.Transparency.Remote;
 
 namespace Sigil.Cli.Commands;
 
@@ -21,6 +22,8 @@ public static class SignManifestCommand
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
         var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
         var includeOption = new Option<string?>("--include") { Description = "Glob filter for files (e.g. *.dll)" };
+        var logUrlOption = new Option<string?>("--log-url") { Description = "Remote transparency log URL, or 'rekor' for Sigstore public log" };
+        var logApiKeyOption = new Option<string?>("--log-api-key") { Description = "API key for Sigil log server (not needed for Rekor)" };
 
         var cmd = new Command("sign-manifest", "Sign multiple files with a shared manifest signature");
         cmd.Add(pathArg);
@@ -33,6 +36,8 @@ public static class SignManifestCommand
         cmd.Add(vaultKeyOption);
         cmd.Add(timestampOption);
         cmd.Add(includeOption);
+        cmd.Add(logUrlOption);
+        cmd.Add(logApiKeyOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -46,6 +51,8 @@ public static class SignManifestCommand
             var vaultKey = parseResult.GetValue(vaultKeyOption);
             var tsaUrl = parseResult.GetValue(timestampOption);
             var includeFilter = parseResult.GetValue(includeOption);
+            var logUrl = parseResult.GetValue(logUrlOption);
+            var logApiKey = parseResult.GetValue(logApiKeyOption);
 
             // Resolve files from path
             var (basePath, filePaths) = ResolveFiles(path, includeFilter);
@@ -105,6 +112,7 @@ public static class SignManifestCommand
 
                 var envelope = await SignOrAppendAsync(basePath, filePaths, outputPath, signer, fingerprint, label);
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ManifestSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -154,6 +162,7 @@ public static class SignManifestCommand
 
                 var envelope = SignOrAppend(basePath, filePaths, outputPath, localSigner, fingerprint, label);
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ManifestSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -258,5 +267,42 @@ public static class SignManifestCommand
         if (mode.Contains("ephemeral", StringComparison.Ordinal))
             Console.WriteLine($"Mode: {mode}");
         Console.WriteLine($"Output: {outputPath}");
+    }
+
+    private static async Task SubmitToLogIfRequestedAsync(
+        ManifestEnvelope envelope, string? logUrl, string? logApiKey)
+    {
+        if (logUrl is null)
+            return;
+
+        IRemoteLog remoteLog;
+        try
+        {
+            remoteLog = RemoteLogFactory.Create(logUrl, logApiKey);
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine($"Warning: {ex.Message} Manifest saved without log entry.");
+            return;
+        }
+
+        using (remoteLog)
+        {
+            var lastEntry = envelope.Signatures[^1];
+            // Use first subject as representative for the log entry
+            var subject = envelope.Subjects[0];
+            var result = await LogSubmitter.SubmitAsync(
+                lastEntry, subject, remoteLog).ConfigureAwait(false);
+
+            if (result.IsSuccess)
+            {
+                envelope.Signatures[^1] = result.Value;
+                Console.WriteLine($"Logged: {remoteLog.LogUrl} (index {result.Value.TransparencyLogIndex})");
+            }
+            else
+            {
+                Console.Error.WriteLine($"Warning: Log submission failed ({result.ErrorMessage}). Manifest saved without log entry.");
+            }
+        }
     }
 }

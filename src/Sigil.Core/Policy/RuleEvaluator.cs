@@ -1,4 +1,5 @@
 using Sigil.Signing;
+using Sigil.Transparency.Remote;
 using Sigil.Trust;
 
 namespace Sigil.Policy;
@@ -229,5 +230,97 @@ public static class RuleEvaluator
                 ? "Found signature from a required key."
                 : "No valid signature matches the required fingerprints."
         };
+    }
+
+    public static RuleResult EvaluateLogged(PolicyRule rule, PolicyContext context)
+    {
+        // Collect signature entries from whatever envelope type is available
+        var entries = GetSignatureEntries(context);
+
+        if (entries.Count == 0)
+        {
+            return new RuleResult
+            {
+                RuleName = "logged",
+                Passed = false,
+                Reason = "No signature entries available to check for transparency log data."
+            };
+        }
+
+        // Find valid signatures that have transparency data
+        var validKeyIds = context.Verification.Signatures
+            .Where(s => s.IsValid)
+            .Select(s => s.KeyId)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var loggedEntries = entries
+            .Where(e => validKeyIds.Contains(e.KeyId) &&
+                        !string.IsNullOrEmpty(e.TransparencyLogUrl) &&
+                        e.TransparencyInclusionProof is not null &&
+                        !string.IsNullOrEmpty(e.TransparencySignedCheckpoint))
+            .ToList();
+
+        if (loggedEntries.Count == 0)
+        {
+            return new RuleResult
+            {
+                RuleName = "logged",
+                Passed = false,
+                Reason = "No valid signature has transparency log data (logUrl, inclusionProof, signedCheckpoint)."
+            };
+        }
+
+        // If logPublicKey is provided, verify the signed checkpoint cryptographically
+        if (!string.IsNullOrWhiteSpace(rule.LogPublicKey))
+        {
+            byte[] logPublicKeyBytes;
+            try
+            {
+                logPublicKeyBytes = Convert.FromBase64String(rule.LogPublicKey);
+            }
+            catch (FormatException)
+            {
+                return new RuleResult
+                {
+                    RuleName = "logged",
+                    Passed = false,
+                    Reason = "logPublicKey is not valid base64."
+                };
+            }
+
+            foreach (var entry in loggedEntries)
+            {
+                var checkpointResult = ReceiptValidator.ValidateSignedCheckpoint(
+                    entry.TransparencySignedCheckpoint!, logPublicKeyBytes);
+
+                if (!checkpointResult.IsSuccess)
+                {
+                    return new RuleResult
+                    {
+                        RuleName = "logged",
+                        Passed = false,
+                        Reason = $"Transparency checkpoint verification failed: {checkpointResult.ErrorMessage}"
+                    };
+                }
+            }
+        }
+
+        return new RuleResult
+        {
+            RuleName = "logged",
+            Passed = true,
+            Reason = $"{loggedEntries.Count} valid signature(s) have transparency log receipts."
+        };
+    }
+
+    private static List<SignatureEntry> GetSignatureEntries(PolicyContext context)
+    {
+        if (context.Envelope is not null)
+            return context.Envelope.Signatures;
+
+        if (context.ManifestEnvelope is not null)
+            return context.ManifestEnvelope.Signatures;
+
+        return [];
     }
 }

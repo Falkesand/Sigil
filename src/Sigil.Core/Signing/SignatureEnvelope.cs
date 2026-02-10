@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Sigil.Transparency.Remote;
 
 namespace Sigil.Signing;
 
@@ -63,4 +64,16 @@ public sealed class SignatureEntry
 
     [JsonPropertyName("oidcIdentity")]
     public string? OidcIdentity { get; init; }
+
+    [JsonPropertyName("transparencyLogUrl")]
+    public string? TransparencyLogUrl { get; init; }
+
+    [JsonPropertyName("transparencyLogIndex")]
+    public long? TransparencyLogIndex { get; init; }
+
+    [JsonPropertyName("transparencySignedCheckpoint")]
+    public string? TransparencySignedCheckpoint { get; init; }
+
+    [JsonPropertyName("transparencyInclusionProof")]
+    public RemoteInclusionProof? TransparencyInclusionProof { get; init; }
 }

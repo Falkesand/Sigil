@@ -13,7 +13,7 @@ public static class PolicyLoader
     private static readonly HashSet<string> ValidRuleTypes = new(StringComparer.Ordinal)
     {
         "min-signatures", "timestamp", "sbom-metadata",
-        "algorithm", "label", "trusted", "key"
+        "algorithm", "label", "trusted", "key", "logged"
     };
 
     public static PolicyResult<PolicyDocument> Load(string json)

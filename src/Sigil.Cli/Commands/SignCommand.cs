@@ -5,6 +5,7 @@ using Sigil.Keyless;
 using Sigil.Keys;
 using Sigil.Signing;
 using Sigil.Timestamping;
+using Sigil.Transparency.Remote;
 
 namespace Sigil.Cli.Commands;
 
@@ -23,6 +24,8 @@ public static class SignCommand
         var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
         var keylessOption = new Option<bool>("--keyless") { Description = "Use keyless/OIDC signing with ephemeral keys" };
         var oidcTokenOption = new Option<string?>("--oidc-token") { Description = "OIDC token for keyless signing (auto-detected from CI if omitted)" };
+        var logUrlOption = new Option<string?>("--log-url") { Description = "Remote transparency log URL, or 'rekor' for Sigstore public log" };
+        var logApiKeyOption = new Option<string?>("--log-api-key") { Description = "API key for Sigil log server (not needed for Rekor)" };
 
         var cmd = new Command("sign", "Sign an artifact and produce a detached signature envelope");
         cmd.Add(artifactArg);
@@ -36,6 +39,8 @@ public static class SignCommand
         cmd.Add(timestampOption);
         cmd.Add(keylessOption);
         cmd.Add(oidcTokenOption);
+        cmd.Add(logUrlOption);
+        cmd.Add(logApiKeyOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -50,6 +55,8 @@ public static class SignCommand
             var tsaUrl = parseResult.GetValue(timestampOption);
             var keyless = parseResult.GetValue(keylessOption);
             var oidcToken = parseResult.GetValue(oidcTokenOption);
+            var logUrl = parseResult.GetValue(logUrlOption);
+            var logApiKey = parseResult.GetValue(logApiKeyOption);
 
             if (!artifact.Exists)
             {
@@ -137,6 +144,7 @@ public static class SignCommand
                     artifact.FullName, keylessSigner, label);
 
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -179,6 +187,7 @@ public static class SignCommand
                 var envelope = await LoadOrCreateEnvelopeAsync(artifact, outputPath, signer, fingerprint, label);
 
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -237,6 +246,7 @@ public static class SignCommand
                 var envelope = LoadOrCreateEnvelope(artifact, outputPath, localSigner, fingerprint, label);
 
                 await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
 
                 var json = ArtifactSigner.Serialize(envelope);
                 File.WriteAllText(outputPath, json);
@@ -312,5 +322,40 @@ public static class SignCommand
         }
 
         return await ArtifactSigner.SignAsync(artifact.FullName, signer, fingerprint, label).ConfigureAwait(false);
+    }
+
+    private static async Task SubmitToLogIfRequestedAsync(
+        SignatureEnvelope envelope, string? logUrl, string? logApiKey)
+    {
+        if (logUrl is null)
+            return;
+
+        IRemoteLog remoteLog;
+        try
+        {
+            remoteLog = RemoteLogFactory.Create(logUrl, logApiKey);
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine($"Warning: {ex.Message} Signature saved without log entry.");
+            return;
+        }
+
+        using (remoteLog)
+        {
+            var lastEntry = envelope.Signatures[^1];
+            var result = await LogSubmitter.SubmitAsync(
+                lastEntry, envelope.Subject, remoteLog).ConfigureAwait(false);
+
+            if (result.IsSuccess)
+            {
+                envelope.Signatures[^1] = result.Value;
+                Console.WriteLine($"Logged: {remoteLog.LogUrl} (index {result.Value.TransparencyLogIndex})");
+            }
+            else
+            {
+                Console.Error.WriteLine($"Warning: Log submission failed ({result.ErrorMessage}). Signature saved without log entry.");
+            }
+        }
     }
 }

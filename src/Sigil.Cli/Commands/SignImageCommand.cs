@@ -18,6 +18,8 @@ public static class SignImageCommand
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp, pkcs11" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
         var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
+        var logUrlOption = new Option<string?>("--log-url") { Description = "Remote transparency log URL, or 'rekor' for Sigstore public log" };
+        var logApiKeyOption = new Option<string?>("--log-api-key") { Description = "API key for Sigil log server (not needed for Rekor)" };
 
         var cmd = new Command("sign-image", "Sign an OCI container image");
         cmd.Add(imageArg);
@@ -28,6 +30,8 @@ public static class SignImageCommand
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
         cmd.Add(timestampOption);
+        cmd.Add(logUrlOption);
+        cmd.Add(logApiKeyOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -39,6 +43,8 @@ public static class SignImageCommand
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
             var tsaUrl = parseResult.GetValue(timestampOption);
+            var logUrl = parseResult.GetValue(logUrlOption);
+            var logApiKey = parseResult.GetValue(logApiKeyOption);
 
             // Validate mutual exclusivity
             if (vaultName is not null && keyPath is not null)
@@ -103,7 +109,7 @@ public static class SignImageCommand
 
                 try
                 {
-                    await SignAndPushAsync(imageRef, signer, creds, label, tsaUrl, signingMode, isEphemeral);
+                    await SignAndPushAsync(imageRef, signer, creds, label, tsaUrl, logUrl, logApiKey, signingMode, isEphemeral);
                 }
                 finally
                 {
@@ -147,7 +153,7 @@ public static class SignImageCommand
 
             using (signer)
             {
-                await SignAndPushAsync(imageRef, signer, creds, label, tsaUrl, signingMode, isEphemeral);
+                await SignAndPushAsync(imageRef, signer, creds, label, tsaUrl, logUrl, logApiKey, signingMode, isEphemeral);
             }
         });
 
@@ -156,7 +162,8 @@ public static class SignImageCommand
 
     private static async Task SignAndPushAsync(
         ImageReference imageRef, ISigner signer, RegistryCredentials creds,
-        string? label, string? tsaUrl, string signingMode, bool isEphemeral)
+        string? label, string? tsaUrl, string? logUrl, string? logApiKey,
+        string signingMode, bool isEphemeral)
     {
         Uri? tsaUri = null;
         if (tsaUrl is not null)
@@ -183,5 +190,10 @@ public static class SignImageCommand
         Console.WriteLine($"Key: {result.Value.KeyId[..12]}...");
         Console.WriteLine($"Mode: {signingMode}");
         Console.WriteLine($"Signature: {result.Value.SignatureDigest}");
+
+        if (logUrl is not null)
+        {
+            Console.Error.WriteLine("Warning: --log-url is not yet supported for OCI image signing.");
+        }
     }
 }
