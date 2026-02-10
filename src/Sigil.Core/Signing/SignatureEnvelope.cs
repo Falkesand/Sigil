@@ -54,4 +54,13 @@ public sealed class SignatureEntry
 
     [JsonPropertyName("timestampToken")]
     public string? TimestampToken { get; init; }
+
+    [JsonPropertyName("oidcToken")]
+    public string? OidcToken { get; init; }
+
+    [JsonPropertyName("oidcIssuer")]
+    public string? OidcIssuer { get; init; }
+
+    [JsonPropertyName("oidcIdentity")]
+    public string? OidcIdentity { get; init; }
 }

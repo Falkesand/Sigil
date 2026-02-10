@@ -44,7 +44,10 @@ public static class TimestampApplier
                 Value = entry.Value,
                 Timestamp = entry.Timestamp,
                 Label = entry.Label,
-                TimestampToken = Convert.ToBase64String(result.Value)
+                TimestampToken = Convert.ToBase64String(result.Value),
+                OidcToken = entry.OidcToken,
+                OidcIssuer = entry.OidcIssuer,
+                OidcIdentity = entry.OidcIdentity
             };
 
             return TimestampResult<SignatureEntry>.Ok(timestampedEntry);

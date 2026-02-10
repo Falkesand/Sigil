@@ -149,10 +149,11 @@ public class TrustBundleSerializationTests
     {
         Assert.Equal(0, (int)TrustDecision.Trusted);
         Assert.Equal(1, (int)TrustDecision.TrustedViaEndorsement);
-        Assert.Equal(2, (int)TrustDecision.Untrusted);
-        Assert.Equal(3, (int)TrustDecision.Expired);
-        Assert.Equal(4, (int)TrustDecision.ScopeMismatch);
-        Assert.Equal(5, (int)TrustDecision.BundleInvalid);
+        Assert.Equal(2, (int)TrustDecision.TrustedViaOidc);
+        Assert.Equal(3, (int)TrustDecision.Untrusted);
+        Assert.Equal(4, (int)TrustDecision.Expired);
+        Assert.Equal(5, (int)TrustDecision.ScopeMismatch);
+        Assert.Equal(6, (int)TrustDecision.BundleInvalid);
     }
 
     [Fact]
@@ -200,7 +201,7 @@ public class TrustBundleSerializationTests
     [Fact]
     public void TrustDecision_Revoked_has_expected_value()
     {
-        Assert.Equal(6, (int)TrustDecision.Revoked);
+        Assert.Equal(7, (int)TrustDecision.Revoked);
     }
 
     private static TrustBundle CreateFullBundle() => new()

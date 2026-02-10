@@ -101,6 +101,12 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Manifests with trust bundles](#manifests-with-trust-bundles)
   - [How manifest signing works](#how-manifest-signing-works)
   - [Manifest envelope format](#manifest-envelope-format)
+- [Keyless/OIDC signing](#keylessoidc-signing)
+  - [Sign in GitHub Actions](#sign-in-github-actions)
+  - [Sign with a manual OIDC token](#sign-with-a-manual-oidc-token)
+  - [Trust OIDC identities](#trust-oidc-identities)
+  - [Verify keyless signatures](#verify-keyless-signatures)
+  - [How keyless signing works](#how-keyless-signing-works)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -2401,11 +2407,94 @@ The `.manifest.sig.json` envelope:
 
 The `kind` field distinguishes manifest envelopes from single-file envelopes (`"artifact"`). Subjects are ordered deterministically by name. Each signature covers the entire subjects array — there are no per-file signatures.
 
+## Keyless/OIDC signing
+
+Keyless signing lets you sign artifacts using your CI identity (GitHub Actions, etc.) without managing any keys. An ephemeral key pair is generated, bound to your OIDC token, and discarded after signing. The OIDC token is embedded in the signature envelope so verifiers can confirm who signed it.
+
+### Sign in GitHub Actions
+
+In a GitHub Actions workflow, Sigil auto-detects the OIDC environment:
+
+```yaml
+- name: Sign artifact
+  run: sigil sign artifact.tar.gz --keyless --timestamp https://freetsa.org/tsr
+```
+
+The `--timestamp` flag is required for keyless signing — ephemeral keys need timestamps for trust evaluation. Sigil requests a token from GitHub's OIDC provider, binds it to the ephemeral key via the `aud` claim, signs the artifact, and embeds the JWT in the envelope.
+
+### Sign with a manual OIDC token
+
+For other OIDC providers or testing, pass the token directly:
+
+```
+sigil sign artifact.tar.gz --keyless --oidc-token <jwt> --timestamp https://freetsa.org/tsr
+```
+
+### Trust OIDC identities
+
+Add trusted OIDC identities to a trust bundle:
+
+```
+sigil trust identity-add trust.json \
+  --issuer https://token.actions.githubusercontent.com \
+  --subject "repo:myorg/*" \
+  --name "GitHub CI (myorg)"
+```
+
+The `--subject` supports glob patterns — `repo:myorg/*` trusts any repository in the `myorg` organization. The `--issuer` must match exactly (no URL normalization).
+
+Remove an identity:
+
+```
+sigil trust identity-remove trust.json \
+  --issuer https://token.actions.githubusercontent.com \
+  --subject "repo:myorg/*"
+```
+
+### Verify keyless signatures
+
+Verification works the same as regular signatures. When a trust bundle contains OIDC identities, Sigil fetches the issuer's JWKS to validate the embedded JWT:
+
+```
+sigil verify artifact.tar.gz --trust-bundle trust.json
+```
+
+Output includes OIDC identity info:
+
+```
+Artifact: artifact.tar.gz
+Digests: MATCH
+  [TRUSTED (OIDC)] sha256:abc123... (GitHub CI (myorg))
+           OIDC: repo:myorg/myrepo:ref:refs/heads/main (from https://token.actions.githubusercontent.com)
+           Timestamp: 2026-02-10T10:00:00Z (verified)
+
+All signatures TRUSTED.
+```
+
+### How keyless signing works
+
+1. **Generate ephemeral key** — Sigil creates a throwaway ECDSA P-256 key pair in memory.
+2. **Compute audience** — The audience is `sigil:sha256:<SPKI-fingerprint>`, cryptographically binding the OIDC token to this specific key.
+3. **Acquire OIDC token** — In GitHub Actions, Sigil calls the `ACTIONS_ID_TOKEN_REQUEST_URL` API with the audience. For manual mode, the user provides the token directly.
+4. **Sign artifact** — The ephemeral key signs the artifact using the same payload format as regular signatures.
+5. **Embed OIDC metadata** — The signature entry includes `oidcToken` (the raw JWT), `oidcIssuer`, and `oidcIdentity` fields.
+6. **Apply timestamp** — An RFC 3161 timestamp is mandatory for keyless signatures.
+7. **Discard key** — The ephemeral private key is discarded after signing.
+
+During verification:
+1. **Parse JWT** — Extract issuer, subject, audience, and key ID from the embedded JWT.
+2. **Fetch JWKS** — Retrieve the issuer's public keys via `{issuer}/.well-known/openid-configuration` → `jwks_uri`.
+3. **Verify JWT signature** — Validate the JWT using the matching JWK (RS256 or ES256).
+4. **Check audience binding** — Confirm the JWT's `aud` matches `sigil:sha256:<SPKI-fingerprint>` of the signing key.
+5. **Evaluate trust** — Match the JWT's issuer and subject against the trust bundle's `identities` list using glob patterns.
+
+The audience binding prevents token reuse: an OIDC token acquired for one ephemeral key cannot be replayed with a different key, because the audience contains the key's fingerprint.
+
 ## CLI reference
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
-sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
+sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil attest <file> --predicate <json> --type <type> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
@@ -2416,6 +2505,8 @@ sigil trust remove <bundle> --fingerprint <fp>
 sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
 sigil trust sign <bundle> --key <private.pem> | --vault <provider> --vault-key <reference> [-o path] [--passphrase "pass"]
 sigil trust revoke <bundle> --fingerprint <fp> [--reason "text"]
+sigil trust identity-add <bundle> --issuer <url> --subject <pattern> [--name "display name"] [--not-after date]
+sigil trust identity-remove <bundle> --issuer <url> --subject <pattern>
 sigil trust show <bundle>
 sigil log append <envelope> [--log <path>] [--signature-index <n>]
 sigil log verify [--log <path>] [--checkpoint <path>]
@@ -2438,12 +2529,15 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 - `--passphrase` encrypts the private key
 - `--algorithm` selects the signing algorithm (default: `ecdsa-p256`)
 
-**sign**: Sign a file. Three signing modes:
-- Without `--key` or `--vault`: ephemeral mode (key generated in memory, discarded after signing)
+**sign**: Sign a file. Four signing modes:
+- Without `--key`, `--vault`, or `--keyless`: ephemeral mode (key generated in memory, discarded after signing)
 - With `--key`: persistent mode (loads private key from PEM file, algorithm auto-detected)
 - With `--vault` and `--vault-key`: vault mode (private key never leaves the vault)
-- `--vault` and `--key` are mutually exclusive
-- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
+- With `--keyless`: keyless mode (ephemeral key + OIDC identity binding via GitHub Actions or `--oidc-token`)
+- `--key`, `--vault`, and `--keyless` are mutually exclusive
+- `--keyless` requires `--timestamp` (ephemeral keys need timestamps for trust evaluation)
+- `--oidc-token` provides a manual OIDC JWT (requires `--keyless`); without it, the token is acquired from GitHub Actions
+- `--algorithm` only applies to ephemeral and keyless modes (default: `ecdsa-p256`)
 - `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (non-fatal on failure)
 - SBOM format is auto-detected for CycloneDX and SPDX JSON files
 
@@ -2487,7 +2581,16 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 
 **trust revoke**: Revoke a key in an unsigned bundle. The key remains in the key list but is marked as revoked. Revoked keys are rejected during trust evaluation. The bundle must be re-signed after adding revocations.
 
-**trust show**: Display the contents of a trust bundle (keys, endorsements, revocations, signature status).
+**trust identity-add**: Add a trusted OIDC identity to an unsigned bundle.
+- `--issuer` is the OIDC issuer URL (exact match during verification)
+- `--subject` is a glob pattern matching the JWT `sub` claim (e.g., `repo:myorg/*`)
+- `--name` is an optional display name for the identity
+- `--not-after` sets an expiry date for the identity trust entry
+
+**trust identity-remove**: Remove a trusted OIDC identity from an unsigned bundle.
+- Matches on both `--issuer` and `--subject` (both required)
+
+**trust show**: Display the contents of a trust bundle (keys, endorsements, identities, revocations, signature status).
 
 **log append**: Append a signing event to the transparency log.
 - `<envelope>` is the path to a `.sig.json` file

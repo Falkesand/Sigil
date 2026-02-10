@@ -1,4 +1,5 @@
 using System.Globalization;
+using Sigil.Keyless;
 using Sigil.Signing;
 using Sigil.Timestamping;
 
@@ -17,7 +18,8 @@ public static class TrustEvaluator
         VerificationResult verification,
         TrustBundle bundle,
         string? artifactName,
-        DateTimeOffset? evaluationTime = null)
+        DateTimeOffset? evaluationTime = null,
+        IReadOnlyDictionary<string, OidcVerificationInfo>? oidcInfo = null)
     {
         ArgumentNullException.ThrowIfNull(verification);
         ArgumentNullException.ThrowIfNull(bundle);
@@ -28,7 +30,9 @@ public static class TrustEvaluator
 
         foreach (var sig in verification.Signatures)
         {
-            results.Add(EvaluateSignature(sig, bundle, artifactName, now));
+            OidcVerificationInfo? sigOidc = null;
+            oidcInfo?.TryGetValue(sig.KeyId, out sigOidc);
+            results.Add(EvaluateSignature(sig, bundle, artifactName, now, sigOidc));
         }
 
         return new TrustEvaluationResult { Signatures = results };
@@ -38,7 +42,8 @@ public static class TrustEvaluator
         SignatureVerificationResult sig,
         TrustBundle bundle,
         string? artifactName,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        OidcVerificationInfo? oidcInfo = null)
     {
         // Rule 1: Crypto failure trumps trust
         if (!sig.IsValid)
@@ -79,7 +84,22 @@ public static class TrustEvaluator
         }
 
         // Rule 3b: Search endorsements
-        return EvaluateViaEndorsement(sig, bundle, artifactName, now);
+        var endorsementResult = EvaluateViaEndorsement(sig, bundle, artifactName, now);
+        if (endorsementResult.Decision != TrustDecision.Untrusted)
+        {
+            return endorsementResult;
+        }
+
+        // Rule 3c: OIDC identity
+        if (oidcInfo is { IsValid: true })
+        {
+            var oidcResult = EvaluateOidcIdentity(sig, bundle, oidcInfo, now);
+            // Return OIDC result whether trusted or not — the OIDC-specific
+            // error message is more informative than the generic endorsement one
+            return oidcResult;
+        }
+
+        return endorsementResult;
     }
 
     private static SignatureTrustResult EvaluateDirectKey(
@@ -175,6 +195,55 @@ public static class TrustEvaluator
             KeyId = sig.KeyId,
             Decision = TrustDecision.Untrusted,
             Reason = "Key not found in trust bundle."
+        };
+    }
+
+    private static SignatureTrustResult EvaluateOidcIdentity(
+        SignatureVerificationResult sig,
+        TrustBundle bundle,
+        OidcVerificationInfo oidcInfo,
+        DateTimeOffset now)
+    {
+        // Keyless signatures require a valid timestamp
+        if (sig.TimestampInfo is not { IsValid: true })
+        {
+            return new SignatureTrustResult
+            {
+                KeyId = sig.KeyId,
+                Decision = TrustDecision.Untrusted,
+                Reason = "Keyless signature requires a valid timestamp."
+            };
+        }
+
+        foreach (var identity in bundle.Identities)
+        {
+            if (!string.Equals(identity.Issuer, oidcInfo.Issuer, StringComparison.Ordinal))
+                continue;
+
+            if (oidcInfo.Identity is null ||
+                !GlobMatcher.IsMatch(oidcInfo.Identity, identity.SubjectPattern))
+                continue;
+
+            if (IsExpired(identity.NotAfter, now) &&
+                !IsTimestampBeforeExpiry(sig.TimestampInfo, identity.NotAfter))
+                continue;
+
+            return new SignatureTrustResult
+            {
+                KeyId = sig.KeyId,
+                Decision = TrustDecision.TrustedViaOidc,
+                DisplayName = identity.DisplayName,
+                Reason = $"OIDC identity trusted: {oidcInfo.Identity} from {oidcInfo.Issuer}.",
+                OidcIssuer = oidcInfo.Issuer,
+                OidcIdentity = oidcInfo.Identity
+            };
+        }
+
+        return new SignatureTrustResult
+        {
+            KeyId = sig.KeyId,
+            Decision = TrustDecision.Untrusted,
+            Reason = "OIDC identity not found in trust bundle."
         };
     }
 

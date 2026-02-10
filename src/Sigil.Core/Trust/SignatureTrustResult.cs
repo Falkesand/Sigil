@@ -9,4 +9,6 @@ public sealed class SignatureTrustResult
     public required TrustDecision Decision { get; init; }
     public string? DisplayName { get; init; }
     public string? Reason { get; init; }
+    public string? OidcIssuer { get; init; }
+    public string? OidcIdentity { get; init; }
 }

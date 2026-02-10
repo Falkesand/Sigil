@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Org.Webpki.JsonCanonicalizer;
 using Sigil.Crypto;
+using Sigil.Keyless;
 using Sigil.Keys;
 using Sigil.Sbom;
 
@@ -168,6 +169,86 @@ public static class ArtifactSigner
             Value = Convert.ToBase64String(signatureBytes),
             Timestamp = timestamp,
             Label = label
+        };
+
+        envelope.Signatures.Add(entry);
+    }
+
+    /// <summary>
+    /// Signs an artifact file using keyless/OIDC signing with an ephemeral key.
+    /// </summary>
+    public static async Task<SignatureEnvelope> SignKeylessAsync(
+        string artifactPath,
+        KeylessSigner keylessSigner,
+        string? label = null,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(artifactPath);
+        ArgumentNullException.ThrowIfNull(keylessSigner);
+
+        if (!File.Exists(artifactPath))
+            throw new FileNotFoundException("Artifact not found.", artifactPath);
+
+        var fileBytes = await File.ReadAllBytesAsync(artifactPath, ct).ConfigureAwait(false);
+        var (sha256, sha512) = HashAlgorithms.ComputeDigests(fileBytes);
+
+        var sbom = SbomDetector.TryDetect(fileBytes);
+
+        var envelope = new SignatureEnvelope
+        {
+            Subject = new SubjectDescriptor
+            {
+                Name = Path.GetFileName(artifactPath),
+                Digests = new Dictionary<string, string>
+                {
+                    ["sha256"] = sha256,
+                    ["sha512"] = sha512
+                },
+                MediaType = sbom?.MediaType,
+                Metadata = sbom?.ToDictionary()
+            }
+        };
+
+        await AppendKeylessSignatureAsync(envelope, fileBytes, keylessSigner, label, ct).ConfigureAwait(false);
+        return envelope;
+    }
+
+    /// <summary>
+    /// Appends a keyless/OIDC signature entry to an existing envelope.
+    /// </summary>
+    public static async Task AppendKeylessSignatureAsync(
+        SignatureEnvelope envelope,
+        byte[] artifactBytes,
+        KeylessSigner keylessSigner,
+        string? label = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(artifactBytes);
+        ArgumentNullException.ThrowIfNull(keylessSigner);
+
+        var signer = keylessSigner.Signer;
+        var fingerprint = Keys.KeyFingerprint.Compute(signer.PublicKey);
+        var algorithm = signer.Algorithm.ToCanonicalName();
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ",
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        var payloadToSign = BuildSigningPayload(
+            envelope.Subject, artifactBytes, envelope.Version,
+            fingerprint.Value, algorithm, timestamp, label);
+        var signatureBytes = await signer.SignAsync(payloadToSign, ct).ConfigureAwait(false);
+
+        var entry = new SignatureEntry
+        {
+            KeyId = fingerprint.Value,
+            Algorithm = algorithm,
+            PublicKey = Convert.ToBase64String(signer.PublicKey),
+            Value = Convert.ToBase64String(signatureBytes),
+            Timestamp = timestamp,
+            Label = label,
+            OidcToken = keylessSigner.OidcToken,
+            OidcIssuer = keylessSigner.OidcIssuer,
+            OidcIdentity = keylessSigner.OidcIdentity
         };
 
         envelope.Signatures.Add(entry);

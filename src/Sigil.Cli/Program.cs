@@ -22,6 +22,8 @@ trustCommand.Add(TrustEndorseCommand.Create());
 trustCommand.Add(TrustSignCommand.Create());
 trustCommand.Add(TrustShowCommand.Create());
 trustCommand.Add(TrustRevokeCommand.Create());
+trustCommand.Add(TrustIdentityAddCommand.Create());
+trustCommand.Add(TrustIdentityRemoveCommand.Create());
 rootCommand.Add(trustCommand);
 rootCommand.Add(DiscoverCommand.Create());
 rootCommand.Add(TimestampCommand.Create());

@@ -4,6 +4,7 @@ public enum TrustDecision
 {
     Trusted,
     TrustedViaEndorsement,
+    TrustedViaOidc,
     Untrusted,
     Expired,
     ScopeMismatch,

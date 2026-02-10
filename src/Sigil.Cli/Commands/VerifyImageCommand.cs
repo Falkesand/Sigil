@@ -113,6 +113,7 @@ public static class VerifyImageCommand
                             {
                                 TrustDecision.Trusted => "TRUSTED",
                                 TrustDecision.TrustedViaEndorsement => "TRUSTED",
+                                TrustDecision.TrustedViaOidc => "TRUSTED (OIDC)",
                                 TrustDecision.Expired => "EXPIRED",
                                 TrustDecision.ScopeMismatch => "SCOPE_MISMATCH",
                                 TrustDecision.Revoked => "REVOKED",

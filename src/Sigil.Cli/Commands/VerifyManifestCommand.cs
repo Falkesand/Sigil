@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Sigil.Discovery;
+using Sigil.Keyless;
 using Sigil.Policy;
 using Sigil.Signing;
 using Sigil.Trust;
@@ -97,11 +98,11 @@ public static class VerifyManifestCommand
             TrustEvaluationResult? trustResult = null;
             if (discoverUri is not null)
             {
-                trustResult = await DiscoverAndEvaluateTrust(discoverUri, authority, verification);
+                trustResult = await DiscoverAndEvaluateTrustAsync(discoverUri, authority, verification, envelope);
             }
             else if (trustBundlePath is not null)
             {
-                trustResult = EvaluateTrust(trustBundlePath, authority, verification);
+                trustResult = await EvaluateTrustAsync(trustBundlePath, authority, verification, envelope);
             }
 
             // Display signature results
@@ -123,6 +124,7 @@ public static class VerifyManifestCommand
                         {
                             TrustDecision.Trusted => "TRUSTED",
                             TrustDecision.TrustedViaEndorsement => "TRUSTED",
+                            TrustDecision.TrustedViaOidc => "TRUSTED (OIDC)",
                             TrustDecision.Expired => "EXPIRED",
                             TrustDecision.ScopeMismatch => "SCOPE_MISMATCH",
                             TrustDecision.Revoked => "REVOKED",
@@ -180,10 +182,11 @@ public static class VerifyManifestCommand
         return cmd;
     }
 
-    private static async Task<TrustEvaluationResult?> DiscoverAndEvaluateTrust(
+    private static async Task<TrustEvaluationResult?> DiscoverAndEvaluateTrustAsync(
         string discoverUri,
         string? authority,
-        VerificationResult verification)
+        VerificationResult verification,
+        ManifestEnvelope envelope)
     {
         var dispatcher = new DiscoveryDispatcher();
         var discoveryResult = await dispatcher.ResolveAsync(discoverUri);
@@ -229,13 +232,15 @@ public static class VerifyManifestCommand
             return null;
         }
 
-        return TrustEvaluator.Evaluate(verification, bundle, null);
+        var oidcInfo = await VerifyOidcEntriesAsync(envelope);
+        return TrustEvaluator.Evaluate(verification, bundle, null, oidcInfo: oidcInfo);
     }
 
-    private static TrustEvaluationResult? EvaluateTrust(
+    private static async Task<TrustEvaluationResult?> EvaluateTrustAsync(
         string trustBundlePath,
         string? authority,
-        VerificationResult verification)
+        VerificationResult verification,
+        ManifestEnvelope envelope)
     {
         if (!File.Exists(trustBundlePath))
         {
@@ -275,7 +280,19 @@ public static class VerifyManifestCommand
             return null;
         }
 
-        return TrustEvaluator.Evaluate(verification, bundle, null);
+        var oidcInfo = await VerifyOidcEntriesAsync(envelope);
+        return TrustEvaluator.Evaluate(verification, bundle, null, oidcInfo: oidcInfo);
+    }
+
+    private static async Task<IReadOnlyDictionary<string, OidcVerificationInfo>?> VerifyOidcEntriesAsync(
+        ManifestEnvelope envelope)
+    {
+        if (!envelope.Signatures.Any(s => s.OidcToken is not null))
+            return null;
+
+        using var verifier = new OidcVerifier();
+        var results = await verifier.VerifyEntriesAsync(envelope.Signatures);
+        return results.Count > 0 ? results : null;
     }
 
     private static void EvaluatePolicy(
