@@ -12,6 +12,8 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Sign with a persistent key](#sign-with-a-persistent-key-for-identity)
   - [Choose your algorithm](#choose-your-algorithm)
   - [Sign an SBOM](#sign-an-sbom)
+  - [Sign with a PFX/PKCS#12 file](#sign-with-a-pfxpkcs12-file)
+  - [Sign with the Windows Certificate Store](#sign-with-the-windows-certificate-store)
   - [Sign with a vault key](#sign-with-a-vault-key)
   - [Sign with a hardware token](#sign-with-a-hardware-token)
   - [Add a timestamp](#add-a-timestamp)
@@ -121,6 +123,13 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Trust OIDC identities](#trust-oidc-identities)
   - [Verify keyless signatures](#verify-keyless-signatures)
   - [How keyless signing works](#how-keyless-signing-works)
+- [PFX and certificate store signing](#pfx-and-certificate-store-signing)
+  - [Sign with a PFX file](#sign-with-a-pfx-file)
+  - [PFX auto-detection](#pfx-auto-detection)
+  - [PFX security](#pfx-security)
+  - [Windows Certificate Store](#windows-certificate-store)
+  - [Certificate store with git signing](#certificate-store-with-git-signing)
+  - [LogServer with PFX keys](#logserver-with-pfx-keys)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -149,7 +158,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 | Needs internet | No | Yes | No | Depends |
 | Stores your email | No | Yes (public log) | Optional | Yes |
 | External dependencies | Zero | Many | Many | Many |
-| Key management | None (ephemeral), PEM files, vault/KMS, or PKCS#11 | Ephemeral | Complex | Complex |
+| Key management | None (ephemeral), PEM, PFX/PKCS#12, cert store, vault/KMS, or PKCS#11 | Ephemeral | Complex | Complex |
 | Vault/KMS support | Yes (4 cloud + PKCS#11) | PKCS#11 | No | Partial |
 | Works offline | Yes | No | Yes | Partial |
 | Hidden state on disk | None | None | `~/.gnupg/` | Varies |
@@ -275,6 +284,42 @@ All signatures VERIFIED.
 ```
 
 The metadata is embedded in the signed subject, so it is tamper-proof. Non-SBOM files are signed without metadata — no behavior changes for regular files.
+
+### Sign with a PFX/PKCS#12 file
+
+When your signing key is in a PFX or PKCS#12 file (common in Windows/enterprise environments):
+
+```
+sigil sign my-app.tar.gz --key signing-cert.pfx --passphrase "my-password"
+```
+
+```
+Signed: my-app.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:a3b4c5d6...
+Mode: persistent key
+Signature: my-app.tar.gz.sig.json
+```
+
+Sigil auto-detects PFX files by their `.pfx` or `.p12` extension — no extra flags needed. The private key is extracted securely, used for signing, and the key material is zeroed from memory. See [PFX and certificate store signing](#pfx-and-certificate-store-signing) for details.
+
+### Sign with the Windows Certificate Store
+
+When your signing key lives in the Windows Certificate Store (Active Directory, Group Policy, CNG/HSM-backed):
+
+```
+sigil sign my-app.tar.gz --cert-store abc123def456...
+```
+
+```
+Signed: my-app.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:7f2a3b...
+Mode: certificate store
+Signature: my-app.tar.gz.sig.json
+```
+
+The `--cert-store` option takes the certificate's SHA-1 thumbprint. For non-exportable keys (HSM-backed), signing happens through the certificate's crypto provider — the private key never leaves the hardware. See [PFX and certificate store signing](#pfx-and-certificate-store-signing) for details.
 
 ### Sign with a vault key
 
@@ -587,16 +632,17 @@ Sigil runs on Linux, macOS, and Windows. All multi-line examples in this README 
 
 ## Ephemeral vs persistent vs vault
 
-| | Ephemeral (default) | Persistent (`--key`) | Vault (`--vault`) |
-|---|---|---|---|
-| Setup | None | `sigil generate -o keyname` | Configure vault + auth |
-| Identity proof | No (different key each time) | Yes (stable fingerprint) | Yes (stable fingerprint) |
-| Integrity proof | Yes | Yes | Yes |
-| MITM protection | No (attacker can re-sign) | Yes (with trusted fingerprint) | Yes (with trusted fingerprint) |
-| Key management | None | User manages PEM file | Vault manages key |
-| Private key exposure | In memory (discarded) | On disk (PEM file) | Never leaves vault |
-| CI/CD | Just works | Mount PEM file | IAM roles / service accounts |
-| Trust bundles | Not useful | Yes | Yes |
+| | Ephemeral (default) | Persistent (`--key`) | PFX (`--key *.pfx`) | Cert Store (`--cert-store`) | Vault (`--vault`) |
+|---|---|---|---|---|---|
+| Setup | None | `sigil generate -o keyname` | Obtain PFX file | Install cert in store | Configure vault + auth |
+| Identity proof | No (different key each time) | Yes (stable fingerprint) | Yes (stable fingerprint) | Yes (stable fingerprint) | Yes (stable fingerprint) |
+| Integrity proof | Yes | Yes | Yes | Yes | Yes |
+| MITM protection | No (attacker can re-sign) | Yes (with trusted fingerprint) | Yes (with trusted fingerprint) | Yes (with trusted fingerprint) | Yes (with trusted fingerprint) |
+| Key management | None | User manages PEM file | User manages PFX file | Windows cert store | Vault manages key |
+| Private key exposure | In memory (discarded) | On disk (PEM file) | On disk (PFX file) | Never leaves store/HSM | Never leaves vault |
+| Platform | Any | Any | Any | Windows only | Any |
+| CI/CD | Just works | Mount PEM file | Mount PFX file | Windows runners only | IAM roles / service accounts |
+| Trust bundles | Not useful | Yes | Yes | Yes | Yes |
 
 ## Envelope format
 
@@ -699,7 +745,7 @@ This binds the signature to the file content, its metadata (name, digests, SBOM 
 | ML-DSA-65 | `ml-dsa-65` | Post-quantum (FIPS 204). Requires platform support. |
 | Ed25519 | `ed25519` | Planned — waiting for .NET SDK to ship the native API. |
 
-PEM auto-detection means you never need to tell Sigil what algorithm a key uses — it parses the key's OID from the DER encoding and dispatches to the correct implementation.
+PEM and PFX auto-detection means you never need to tell Sigil what algorithm a key uses — it parses the key's OID from the DER encoding and dispatches to the correct implementation. PFX files (`.pfx`/`.p12`) are auto-detected by extension.
 
 **SBOM detection.** When a file is signed, Sigil tries to parse it as JSON and checks for CycloneDX (`bomFormat: "CycloneDX"`) or SPDX (`spdxVersion: "SPDX-..."`) markers. Detection never throws — if the file isn't a recognized SBOM, it's signed as a plain file with no metadata.
 
@@ -2150,22 +2196,40 @@ dotnet run --project src/Sigil.LogServer -- \
   --api-key your-secret-key
 ```
 
+**Start with a PFX/PKCS#12 file for both TLS and signing:**
+
+```
+dotnet run --project src/Sigil.LogServer -- \
+  --cert-pfx server.pfx \
+  --cert-password "tls-pass" \
+  --db sigil-log.db \
+  --key-pfx signing.pfx \
+  --key-password "signing-pass" \
+  --api-key your-secret-key
+```
+
 | Option | Required | Description |
 |--------|----------|-------------|
 | `--cert` | Yes* | TLS certificate PEM file |
 | `--cert-key` | Yes* | TLS private key PEM file |
+| `--cert-pfx` | Yes* | TLS PFX/PKCS#12 file (alternative to `--cert`/`--cert-key`) |
+| `--cert-password` | No | Password for `--cert-pfx` |
 | `--dev-cert` | Yes* | Use ASP.NET Core dev certificate instead of `--cert`/`--cert-key` |
 | `--db` | No | SQLite database path (default: `sigil-log.db`) |
-| `--key` | Yes | Server signing key PEM (ECDSA, signs checkpoints) |
+| `--key` | Yes** | Server signing key PEM (ECDSA, signs checkpoints) |
+| `--key-pfx` | Yes** | Server signing key PFX (alternative to `--key`) |
+| `--key-password` | No | Password for `--key-pfx` |
 | `--api-key` | Yes | API key for write operations (POST endpoints) |
 | `--db-provider` | No | Database provider: `sqlite` (default), `sqlserver`, `postgres` |
 | `--connection-string` | No | Connection string for SQL Server or PostgreSQL |
 | `--mtls-ca` | No | CA certificate PEM for mutual TLS client verification |
 | `--port` | No | HTTPS port (default: 5199) |
 
-*One of `--cert`/`--cert-key` or `--dev-cert` is required. HTTPS is mandatory — the server refuses to start without TLS configuration.
+*One of `--cert`/`--cert-key`, `--cert-pfx`, or `--dev-cert` is required. `--cert` and `--cert-pfx` are mutually exclusive. HTTPS is mandatory — the server refuses to start without TLS configuration.
 
-The server signing key (`--key`) is an ECDSA key used to sign Merkle tree checkpoints. Generate one with:
+**One of `--key` or `--key-pfx` is required. They are mutually exclusive. When no signing key is provided, an ephemeral key is generated (development only).
+
+The server signing key (`--key` or `--key-pfx`) is an ECDSA key used to sign Merkle tree checkpoints. Generate one with:
 
 ```
 sigil generate -o server-signing
@@ -2356,6 +2420,40 @@ Vault authentication uses environment variables at commit time (not stored in th
 **Note:** If your PKCS#11 device requires touch-to-sign (e.g., YubiKey),
 the terminal will pause after `git commit` and display "Waiting for PKCS#11
 device (touch may be required)...". Touch your device to complete the signing.
+
+### Sign with a PFX key
+
+Configure git to sign commits using a PFX/PKCS#12 file:
+
+```
+sigil git config --key signing-cert.pfx --passphrase "pfx-password" --global
+```
+
+Sigil auto-detects the `.pfx` or `.p12` extension and extracts the signing key. The PFX passphrase is embedded in the wrapper script (see security note below).
+
+### Sign with the Windows Certificate Store
+
+Configure git to sign commits using a certificate from the Windows Certificate Store — the private key never touches disk:
+
+```
+sigil git config --cert-store abc123def456... --global
+```
+
+```
+Git signing configured with Sigil.
+  Key: sha256:7f2a3b...
+  Wrapper: C:\Users\you\.sigil\git-sign.ps1
+  Scope: global
+  Mode: certificate store
+```
+
+Use `--store-location LocalMachine` for certificates installed in the machine store:
+
+```
+sigil git config --cert-store abc123def456... --store-location LocalMachine --global
+```
+
+This is ideal for enterprise environments where keys are managed via Active Directory or Group Policy.
 
 ### Sign with an encrypted PEM key
 
@@ -3024,20 +3122,140 @@ During verification:
 
 The audience binding prevents token reuse: an OIDC token acquired for one ephemeral key cannot be replayed with a different key, because the audience contains the key's fingerprint. GitLab CI tokens use a generic `sigil` audience (no per-key binding), so security relies on short-lived tokens, issuer+subject identity matching in the trust bundle, and mandatory timestamps.
 
+## PFX and certificate store signing
+
+Sigil supports loading signing keys from PFX/PKCS#12 files and the Windows Certificate Store, in addition to PEM files and vault providers. These key sources are common in Windows enterprise environments, code signing workflows, and Active Directory-managed infrastructure.
+
+### Sign with a PFX file
+
+PFX (PKCS#12) files bundle a private key with its certificate chain in a single encrypted file. Sigil auto-detects PFX files by extension — pass a `.pfx` or `.p12` file to `--key` just like a PEM file:
+
+```
+sigil sign release.tar.gz --key code-signing.pfx --passphrase "my-password"
+```
+
+PFX files work everywhere `--key` is accepted:
+
+```
+sigil sign release.tar.gz --key cert.pfx --passphrase "pass"
+sigil sign-manifest ./dist/ --key cert.pfx --passphrase "pass"
+sigil sign-image ghcr.io/org/app:v1 --key cert.pfx --passphrase "pass"
+sigil attest release.tar.gz --predicate prov.json --type slsa-provenance-v1 --key cert.pfx --passphrase "pass"
+sigil trust sign trust.json --key cert.pfx --passphrase "pass"
+sigil git config --key cert.pfx --passphrase "pass" --global
+```
+
+PFX files without a password also work:
+
+```
+sigil sign release.tar.gz --key unprotected.pfx
+```
+
+### PFX auto-detection
+
+Sigil determines the key format by file extension:
+
+| Extension | Format | How it's loaded |
+|-----------|--------|-----------------|
+| `.pem` | PEM | Parsed as PKCS#8, SEC1, or PKCS#1 |
+| `.pfx` | PKCS#12 | Certificate + key extracted |
+| `.p12` | PKCS#12 | Same as `.pfx` |
+| `.PFX`, `.P12` | PKCS#12 | Case-insensitive |
+
+The `--passphrase` option serves double duty: it decrypts encrypted PEM files **and** unlocks password-protected PFX files.
+
+### PFX security
+
+Sigil follows secure key handling practices when loading PFX files:
+
+- **Ephemeral import**: Keys are imported with `EphemeralKeySet` — they never persist in the Windows certificate store
+- **Memory zeroing**: PFX file bytes and extracted PKCS#8 DER bytes are zeroed with `CryptographicOperations.ZeroMemory` after use
+- **No store pollution**: Temporary certificates are never installed in `CurrentUser\My` or `LocalMachine\My`
+
+### Windows Certificate Store
+
+The Windows Certificate Store provides centralized key management via `certmgr.msc`, Active Directory, Group Policy, and CNG/HSM-backed keys. Use `--cert-store` with a certificate's SHA-1 thumbprint:
+
+```
+sigil sign release.tar.gz --cert-store 1a2b3c4d5e6f7890abcdef1234567890abcdef12
+```
+
+Find a certificate's thumbprint in PowerShell:
+
+```powershell
+Get-ChildItem Cert:\CurrentUser\My | Format-Table Subject, Thumbprint
+```
+
+Or in `certmgr.msc`: open a certificate > Details tab > Thumbprint field.
+
+**Store location**: By default, Sigil searches `CurrentUser\My`. For certificates installed in the machine store:
+
+```
+sigil sign release.tar.gz --cert-store 1a2b3c4d... --store-location LocalMachine
+```
+
+**Non-exportable keys**: When a certificate's private key is marked non-exportable (common for HSM-backed or CNG keys), Sigil uses `CertificateKeySigner` to sign through the certificate's crypto provider — the private key material is never extracted. `CanExportPrivateKey` returns `false` for these signers.
+
+**Exportable keys**: When the private key is exportable, Sigil extracts the PKCS#8 DER and imports it into the standard signer infrastructure for maximum compatibility.
+
+**Platform guard**: `--cert-store` is Windows-only. On other platforms, an error message is displayed immediately.
+
+The `--cert-store` option works with all signing commands:
+
+```
+sigil sign release.tar.gz --cert-store abc123...
+sigil sign-manifest ./dist/ --cert-store abc123...
+sigil sign-image ghcr.io/org/app:v1 --cert-store abc123...
+sigil attest release.tar.gz --predicate prov.json --type slsa-provenance-v1 --cert-store abc123...
+sigil trust sign trust.json --cert-store abc123...
+```
+
+### Certificate store with git signing
+
+Configure git to sign commits using a certificate from the store:
+
+```
+sigil git config --cert-store abc123def456... --global
+```
+
+Every `git commit` and `git tag -s` will sign using that certificate's key. Vault authentication and passphrase management are not needed — the Windows certificate store handles key access.
+
+### LogServer with PFX keys
+
+The Sigil LogServer accepts PFX files for both TLS and checkpoint signing:
+
+```
+dotnet run --project src/Sigil.LogServer -- \
+  --cert-pfx server.pfx --cert-password "tls-pass" \
+  --key-pfx signing.pfx --key-password "signing-pass" \
+  --api-key secret --db sigil-log.db
+```
+
+This is useful in Windows environments where TLS certificates and signing keys are distributed as PFX files. PFX bytes are zeroed from memory after loading.
+
+| LogServer option | Description |
+|------------------|-------------|
+| `--key-pfx` | PFX file for checkpoint signing (alternative to `--key`) |
+| `--key-password` | Password for `--key-pfx` |
+| `--cert-pfx` | PFX file for TLS (alternative to `--cert`/`--cert-key`) |
+| `--cert-password` | Password for `--cert-pfx` |
+
+`--key` and `--key-pfx` are mutually exclusive. `--cert`/`--cert-key` and `--cert-pfx` are mutually exclusive.
+
 ## CLI reference
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
-sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
+sigil sign <file> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil attest <file> --predicate <json> --type <type> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
+sigil attest <file> --predicate <json> --type <type> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil timestamp <envelope> --tsa <tsa-url> [--index <n>]
 sigil trust create --name <name> [-o path] [--description "text"]
 sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
 sigil trust remove <bundle> --fingerprint <fp>
 sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
-sigil trust sign <bundle> --key <private.pem> | --vault <provider> --vault-key <reference> [-o path] [--passphrase "pass"]
+sigil trust sign <bundle> --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [-o path] [--passphrase "pass"]
 sigil trust revoke <bundle> --fingerprint <fp> [--reason "text"]
 sigil trust identity-add <bundle> --issuer <url> --subject <pattern> [--name "display name"] [--not-after date]
 sigil trust identity-remove <bundle> --issuer <url> --subject <pattern>
@@ -3050,11 +3268,11 @@ sigil log proof [--log <path>] [--index <n>] [--old-size <m>]
 sigil discover well-known <domain> [-o path]
 sigil discover dns <domain> [-o path]
 sigil discover git <url> [-o path]
-sigil sign-image <image> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--passphrase "pass"] [--algorithm name] [--label "name"] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
+sigil sign-image <image> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--passphrase "pass"] [--algorithm name] [--label "name"] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify-image <image> [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil sign-manifest <path> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
+sigil sign-manifest <path> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify-manifest <manifest> [--base-path path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil git config --key <private.pem> | --vault <provider> --vault-key <reference> [--global] [--passphrase "pass"]
+sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [--global] [--passphrase "pass"]
 ```
 
 **generate**: Create a key pair for persistent signing.
@@ -3063,12 +3281,14 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 - `--passphrase` encrypts the private key
 - `--algorithm` selects the signing algorithm (default: `ecdsa-p256`)
 
-**sign**: Sign a file. Four signing modes:
-- Without `--key`, `--vault`, or `--keyless`: ephemeral mode (key generated in memory, discarded after signing)
-- With `--key`: persistent mode (loads private key from PEM file, algorithm auto-detected)
+**sign**: Sign a file. Five signing modes:
+- Without `--key`, `--vault`, `--keyless`, or `--cert-store`: ephemeral mode (key generated in memory, discarded after signing)
+- With `--key`: persistent mode (loads private key from PEM or PFX file, algorithm auto-detected). PFX files are auto-detected by `.pfx`/`.p12` extension
 - With `--vault` and `--vault-key`: vault mode (private key never leaves the vault)
 - With `--keyless`: keyless mode (ephemeral key + OIDC identity binding via GitHub Actions, GitLab CI, or `--oidc-token`)
-- `--key`, `--vault`, and `--keyless` are mutually exclusive
+- With `--cert-store`: Windows Certificate Store mode (key referenced by thumbprint, supports non-exportable/HSM-backed keys)
+- `--key`, `--vault`, `--keyless`, and `--cert-store` are mutually exclusive
+- `--store-location` selects `CurrentUser` (default) or `LocalMachine` store; requires `--cert-store`
 - `--keyless` requires `--timestamp` (ephemeral keys need timestamps for trust evaluation)
 - `--oidc-token` provides a manual OIDC JWT (requires `--keyless`); without it, the token is acquired from GitHub Actions or GitLab CI
 - `--algorithm` only applies to ephemeral and keyless modes (default: `ecdsa-p256`)
@@ -3077,10 +3297,11 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 - `--log-api-key` provides the API key for Sigil LogServer write operations (not needed for Rekor)
 - SBOM format is auto-detected for CycloneDX and SPDX JSON files
 
-**attest**: Create a DSSE attestation for a file. Three signing modes (same as `sign`):
-- Without `--key` or `--vault`: ephemeral mode
-- With `--key`: persistent mode
+**attest**: Create a DSSE attestation for a file. Four signing modes (same as `sign`):
+- Without `--key`, `--vault`, or `--cert-store`: ephemeral mode
+- With `--key`: persistent mode (PEM or PFX, auto-detected)
 - With `--vault` and `--vault-key`: vault mode
+- With `--cert-store`: Windows Certificate Store mode
 - `--predicate` and `--type` are required
 - `--type` accepts short names (`slsa-provenance-v1`, `spdx-json`, `cyclonedx`) or any valid URI
 - `--timestamp` requests an RFC 3161 timestamp (non-fatal on failure)
@@ -3113,7 +3334,7 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 
 **trust endorse**: Add an endorsement ("Key A vouches for Key B") to an unsigned bundle.
 
-**trust sign**: Sign a bundle with an authority key. Either `--key` or `--vault`/`--vault-key` is required (mutually exclusive). This locks the bundle — modifications require re-signing.
+**trust sign**: Sign a bundle with an authority key. `--key`, `--vault`/`--vault-key`, or `--cert-store` is required (mutually exclusive). This locks the bundle — modifications require re-signing.
 
 **trust revoke**: Revoke a key in an unsigned bundle. The key remains in the key list but is marked as revoked. Revoked keys are rejected during trust evaluation. The bundle must be re-signed after adding revocations.
 
@@ -3158,9 +3379,11 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 **discover git**: Shallow-clone a git repository and read `.sigil/trust.json` or `trust.json`. Use `#branch` in the URL for a specific branch or tag.
 
 **git config**: Configure git to use Sigil for commit/tag signing.
-- `--key` or `--vault`/`--vault-key` is required (mutually exclusive)
-- `--key`: path to the private key PEM file
+- `--key`, `--vault`/`--vault-key`, or `--cert-store` is required (mutually exclusive)
+- `--key`: path to the private key PEM or PFX file (auto-detected by extension)
 - `--vault` and `--vault-key`: vault provider and key reference (see [Vault-backed signing](#vault-backed-signing))
+- `--cert-store`: Windows Certificate Store thumbprint (Windows only)
+- `--store-location`: `CurrentUser` (default) or `LocalMachine`; requires `--cert-store`
 - `--global` sets git config globally and enables `commit.gpgsign = true`
 - Without `--global`, config is local (per-repository) and commits must be signed with `-S`
 - Generates a wrapper script in `~/.sigil/` and sets `gpg.format`, `gpg.x509.program`, and `user.signingkey`
@@ -3168,8 +3391,8 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 
 **sign-image**: Sign an OCI container image in a registry.
 - `<image>` is a full image reference (e.g., `ghcr.io/myorg/myapp:v1.0` or `registry/repo@sha256:...`)
-- Three signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`)
-- `--vault` and `--key` are mutually exclusive
+- Four signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`), cert store (`--cert-store`)
+- `--key`, `--vault`, and `--cert-store` are mutually exclusive
 - `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
 - `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
 - `--label` attaches a label to the signature
@@ -3186,8 +3409,8 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 
 **sign-manifest**: Sign multiple files with a shared manifest signature.
 - `<path>` is a directory (all files signed recursively)
-- Three signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`)
-- `--vault` and `--key` are mutually exclusive
+- Four signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`), cert store (`--cert-store`)
+- `--key`, `--vault`, and `--cert-store` are mutually exclusive
 - `--include` filters files by glob pattern (e.g., `"*.dll"`)
 - `--output` overrides default output path (`<path>/manifest.sig.json`)
 - `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
@@ -3384,7 +3607,6 @@ sign:
 
 ## What's coming
 
-- **PFX, Certificate Store & vault key sources** — Load signing keys from PFX/PKCS#12 files, Windows Certificate Store, and vault-backed checkpoint signing for the LogServer. Full Windows enterprise integration.
 - **Archive/recursive signing** — Sign individual entries inside ZIP, tar.gz, and NuGet packages with an embedded manifest.
 - **Authenticode integration** — Embed Authenticode signatures in PE binaries for Windows OS-level trust recognition.
 - **Trust graph engine** — Build and query cryptographic trust graphs across keys, identities, artifacts, and CI systems. Answer questions like "show me everything transitively dependent on this revoked key."
