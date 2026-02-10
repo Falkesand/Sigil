@@ -14,6 +14,9 @@ public static class Pkcs11AlgorithmMap
     /// <summary>DER-encoded OID for NIST P-384 curve (1.3.132.0.34).</summary>
     public static ReadOnlySpan<byte> EcParamsP384 => [0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22];
 
+    /// <summary>DER-encoded OID for NIST P-521 curve (1.3.132.0.35).</summary>
+    public static ReadOnlySpan<byte> EcParamsP521 => [0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23];
+
     /// <summary>
     /// Detects the signing algorithm from a PKCS#11 key type and optional EC parameters.
     /// </summary>
@@ -33,6 +36,9 @@ public static class Pkcs11AlgorithmMap
             if (ecParams.AsSpan().SequenceEqual(EcParamsP384))
                 return SigningAlgorithm.ECDsaP384;
 
+            if (ecParams.AsSpan().SequenceEqual(EcParamsP521))
+                return SigningAlgorithm.ECDsaP521;
+
             return null;
         }
 
@@ -49,6 +55,7 @@ public static class Pkcs11AlgorithmMap
     {
         SigningAlgorithm.ECDsaP256 => CKM.CKM_ECDSA_SHA256,
         SigningAlgorithm.ECDsaP384 => CKM.CKM_ECDSA_SHA384,
+        SigningAlgorithm.ECDsaP521 => CKM.CKM_ECDSA_SHA512,
         SigningAlgorithm.Rsa => CKM.CKM_SHA256_RSA_PKCS_PSS,
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm), algorithm,
             $"PKCS#11 does not support algorithm: {algorithm}")

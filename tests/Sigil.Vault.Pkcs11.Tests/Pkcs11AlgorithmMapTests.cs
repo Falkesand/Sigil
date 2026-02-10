@@ -12,6 +12,9 @@ public class Pkcs11AlgorithmMapTests
     // DER-encoded OID for P-384: 06 05 2B 81 04 00 22
     private static readonly byte[] EcParamsP384 = [0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22];
 
+    // DER-encoded OID for P-521: 06 05 2B 81 04 00 23
+    private static readonly byte[] EcParamsP521 = [0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23];
+
     [Fact]
     public void FromPkcs11KeyType_EcWithP256Params_ReturnsECDsaP256()
     {
@@ -26,6 +29,14 @@ public class Pkcs11AlgorithmMapTests
         var result = Pkcs11AlgorithmMap.FromPkcs11KeyType(CKK.CKK_EC, EcParamsP384);
 
         Assert.Equal(SigningAlgorithm.ECDsaP384, result);
+    }
+
+    [Fact]
+    public void FromPkcs11KeyType_EcWithP521Params_ReturnsECDsaP521()
+    {
+        var result = Pkcs11AlgorithmMap.FromPkcs11KeyType(CKK.CKK_EC, EcParamsP521);
+
+        Assert.Equal(SigningAlgorithm.ECDsaP521, result);
     }
 
     [Fact]
@@ -79,6 +90,14 @@ public class Pkcs11AlgorithmMapTests
     }
 
     [Fact]
+    public void ToSignMechanism_ECDsaP521_ReturnsEcdsaSha512()
+    {
+        var result = Pkcs11AlgorithmMap.ToSignMechanism(SigningAlgorithm.ECDsaP521);
+
+        Assert.Equal(CKM.CKM_ECDSA_SHA512, result);
+    }
+
+    [Fact]
     public void ToSignMechanism_Rsa_ReturnsSha256RsaPkcssPss()
     {
         var result = Pkcs11AlgorithmMap.ToSignMechanism(SigningAlgorithm.Rsa);
@@ -116,5 +135,12 @@ public class Pkcs11AlgorithmMapTests
     {
         Assert.Equal(7, Pkcs11AlgorithmMap.EcParamsP384.Length);
         Assert.Equal(0x06, Pkcs11AlgorithmMap.EcParamsP384[0]); // ASN.1 OID tag
+    }
+
+    [Fact]
+    public void EcParamsP521_MatchesKnownOid()
+    {
+        Assert.Equal(7, Pkcs11AlgorithmMap.EcParamsP521.Length);
+        Assert.Equal(0x06, Pkcs11AlgorithmMap.EcParamsP521[0]); // ASN.1 OID tag
     }
 }

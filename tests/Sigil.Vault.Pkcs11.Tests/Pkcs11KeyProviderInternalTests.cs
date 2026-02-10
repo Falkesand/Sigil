@@ -54,6 +54,26 @@ public class Pkcs11KeyProviderInternalTests
     }
 
     [Fact]
+    public void UnwrapEcPoint_DerWrappedP521_LongFormLength_UnwrapsCorrectly()
+    {
+        // P-521 uses long-form DER length encoding:
+        // 0x04 0x81 0x85 0x04 <132 bytes> = 136 total
+        var raw = new byte[133]; // 1 + 66 + 66
+        raw[0] = 0x04;
+        for (int i = 1; i < 133; i++) raw[i] = (byte)(i % 256);
+
+        var wrapped = new byte[136]; // 3-byte header + 133 bytes data
+        wrapped[0] = 0x04;  // DER OCTET STRING tag
+        wrapped[1] = 0x81;  // long-form: 1 subsequent length byte
+        wrapped[2] = 133;   // actual length
+        Array.Copy(raw, 0, wrapped, 3, 133);
+
+        var result = Pkcs11KeyProvider.UnwrapEcPoint(wrapped);
+
+        Assert.Equal(raw, result);
+    }
+
+    [Fact]
     public void UnwrapEcPoint_ShortInput_ReturnsUnchanged()
     {
         var input = new byte[] { 0x04, 0x01 };

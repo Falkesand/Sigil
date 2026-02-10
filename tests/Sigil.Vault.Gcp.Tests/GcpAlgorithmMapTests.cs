@@ -32,6 +32,15 @@ public class GcpAlgorithmMapTests
     }
 
     [Fact]
+    public void ToGcpAlgorithm_ECDsaP521_ThrowsNotSupportedException()
+    {
+        var ex = Assert.Throws<NotSupportedException>(
+            () => GcpAlgorithmMap.ToGcpAlgorithm(SigningAlgorithm.ECDsaP521));
+
+        Assert.Contains("P-521", ex.Message);
+    }
+
+    [Fact]
     public void ToGcpAlgorithm_Ed25519_ThrowsNotSupportedException()
     {
         var ex = Assert.Throws<NotSupportedException>(

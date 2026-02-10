@@ -406,6 +406,7 @@ public sealed class Pkcs11KeyProvider : IKeyProvider
             {
                 SigningAlgorithm.ECDsaP256 => ECCurve.NamedCurves.nistP256,
                 SigningAlgorithm.ECDsaP384 => ECCurve.NamedCurves.nistP384,
+                SigningAlgorithm.ECDsaP521 => ECCurve.NamedCurves.nistP521,
                 _ => throw new NotSupportedException($"Unsupported EC algorithm: {algorithm}")
             };
 
@@ -440,12 +441,32 @@ public sealed class Pkcs11KeyProvider : IKeyProvider
             // DER: 0x04 <length> <point-data-starting-with-0x04>
             // Raw: 0x04 <X> <Y>
             //
-            // Distinguish: if ecPoint[1] is the correct length for remaining bytes
-            // AND ecPoint[2] is 0x04, it's DER-wrapped
-            int derLen = ecPoint[1];
-            if (derLen == ecPoint.Length - 2 && ecPoint.Length > 2 && ecPoint[2] == 0x04)
+            // DER length encoding:
+            //   Short-form (P-256, P-384): 0x04 <len> <data> where len <= 0x7F
+            //   Long-form  (P-521):        0x04 0x81 <len> <data> where 0x81 means 1 length byte follows
+            int headerLen;
+            int derLen;
+
+            if (ecPoint[1] <= 0x7F)
             {
-                return ecPoint[2..];
+                // Short-form: single byte length
+                derLen = ecPoint[1];
+                headerLen = 2;
+            }
+            else if (ecPoint[1] == 0x81 && ecPoint.Length > 2)
+            {
+                // Long-form: 0x81 means 1 subsequent length byte
+                derLen = ecPoint[2];
+                headerLen = 3;
+            }
+            else
+            {
+                return ecPoint;
+            }
+
+            if (derLen == ecPoint.Length - headerLen && ecPoint[headerLen] == 0x04)
+            {
+                return ecPoint[headerLen..];
             }
         }
 

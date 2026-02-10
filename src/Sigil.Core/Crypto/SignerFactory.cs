@@ -15,6 +15,7 @@ public static class SignerFactory
     {
         SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.Generate(),
         SigningAlgorithm.ECDsaP384 => ECDsaP384Signer.Generate(),
+        SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.Generate(),
         SigningAlgorithm.Rsa => RsaSigner.Generate(),
         SigningAlgorithm.Ed25519 => throw new NotSupportedException(
             "Ed25519 is not yet available in this .NET SDK. It will be supported in a future release."),
@@ -88,6 +89,7 @@ public static class SignerFactory
         {
             SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.FromPem(pem),
             SigningAlgorithm.ECDsaP384 => ECDsaP384Signer.FromPem(pem),
+            SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.FromPem(pem),
             SigningAlgorithm.Rsa => RsaSigner.FromPem(pem),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
                 "Ed25519 is not yet available in this .NET SDK."),
@@ -109,6 +111,7 @@ public static class SignerFactory
         {
             "ECDSA_P256" or "nistP256" => ECDsaP256Signer.FromPem(pem),
             "ECDSA_P384" or "nistP384" => ECDsaP384Signer.FromPem(pem),
+            "ECDSA_P521" or "nistP521" => ECDsaP521Signer.FromPem(pem),
             _ => throw new NotSupportedException($"Unsupported EC curve: {curveName}")
         };
     }
@@ -125,6 +128,7 @@ public static class SignerFactory
         {
             SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.FromEncryptedPem(pem, passphrase),
             SigningAlgorithm.ECDsaP384 => ECDsaP384Signer.FromEncryptedPem(pem, passphrase),
+            SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.FromEncryptedPem(pem, passphrase),
             SigningAlgorithm.Rsa => RsaSigner.FromEncryptedPem(pem, passphrase),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
                 "Ed25519 is not yet available in this .NET SDK."),
@@ -155,6 +159,7 @@ public static class SignerFactory
             {
                 "ECDSA_P256" or "nistP256" => ECDsaP256Signer.FromEncryptedPem(pem, passphrase),
                 "ECDSA_P384" or "nistP384" => ECDsaP384Signer.FromEncryptedPem(pem, passphrase),
+                "ECDSA_P521" or "nistP521" => ECDsaP521Signer.FromEncryptedPem(pem, passphrase),
                 _ => throw new NotSupportedException($"Unsupported EC curve: {curveName}")
             };
         }
@@ -197,6 +202,6 @@ public static class SignerFactory
         }
 
         throw new NotSupportedException(
-            "Could not detect algorithm from encrypted PEM. Supported: ECDSA P-256, P-384, RSA, ML-DSA-65.");
+            "Could not detect algorithm from encrypted PEM. Supported: ECDSA P-256, P-384, P-521, RSA, ML-DSA-65.");
     }
 }

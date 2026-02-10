@@ -198,6 +198,7 @@ Same fingerprint every time. This enables trust — others can verify that you (
 
 ```
 sigil generate -o mykey --algorithm ecdsa-p384
+sigil generate -o mykey --algorithm ecdsa-p521
 sigil generate -o mykey --algorithm rsa-pss-sha256
 sigil generate -o mykey --algorithm ml-dsa-65
 ```
@@ -206,7 +207,7 @@ When signing with a PEM file, the algorithm is **auto-detected** — no need to 
 
 ```
 sigil sign my-app.tar.gz --key rsa-key.pem    # auto-detects RSA
-sigil sign my-app.tar.gz --key ec-key.pem      # auto-detects P-256 or P-384
+sigil sign my-app.tar.gz --key ec-key.pem      # auto-detects P-256, P-384, or P-521
 ```
 
 For ephemeral signing with a non-default algorithm:
@@ -610,6 +611,7 @@ This binds the signature to the file content, its metadata (name, digests, SBOM 
 |-----------|------|----------|
 | ECDSA P-256 | `ecdsa-p256` | Default. Fast, compact signatures, widely supported. |
 | ECDSA P-384 | `ecdsa-p384` | CNSA suite compliance, enterprise/government requirements. |
+| ECDSA P-521 | `ecdsa-p521` | Maximum NIST curve strength, compliance frameworks requiring 521-bit keys. |
 | RSA-PSS | `rsa-pss-sha256` | Legacy interop, 3072-bit keys. |
 | ML-DSA-65 | `ml-dsa-65` | Post-quantum (FIPS 204). Requires platform support. |
 | Ed25519 | `ed25519` | Planned — waiting for .NET SDK to ship the native API. |
@@ -1637,6 +1639,7 @@ sigil trust sign trust.json --vault pkcs11 --vault-key "pkcs11:token=YubiKey;obj
 |---------------|-----------------|
 | EC P-256 | `ecdsa-p256` |
 | EC P-384 | `ecdsa-p384` |
+| EC P-521 | `ecdsa-p521` |
 | RSA | `rsa-pss-sha256` |
 
 **Security notes:**
@@ -2718,7 +2721,6 @@ A typical GitHub Actions workflow using the local tool:
 
 ## What's coming
 
-- **P-521 support** — ECDSA P-521 curve (same `ECDsa` code path as P-256/P-384).
 - **Keyless/OIDC signing** — Authenticate with OIDC (GitHub Actions, Google, Microsoft), get a short-lived certificate, sign without key management. Sigstore-compatible workflow without cloud dependency.
 - **Remote transparency log** — HTTP API for shared/public signing audit logs beyond the local Merkle tree.
 - **Native AOT / self-contained binaries** — Single-binary distribution without requiring the .NET SDK.

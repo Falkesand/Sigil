@@ -11,6 +11,7 @@ internal static class AwsAlgorithmMap
         {
             SigningAlgorithm.ECDsaP256 => SigningAlgorithmSpec.ECDSA_SHA_256,
             SigningAlgorithm.ECDsaP384 => SigningAlgorithmSpec.ECDSA_SHA_384,
+            SigningAlgorithm.ECDsaP521 => SigningAlgorithmSpec.ECDSA_SHA_512,
             SigningAlgorithm.Rsa => SigningAlgorithmSpec.RSASSA_PSS_SHA_256,
             _ => throw new ArgumentException($"Unsupported signing algorithm: {algorithm}", nameof(algorithm))
         };
@@ -25,6 +26,10 @@ internal static class AwsAlgorithmMap
         if (keySpec == KeySpec.ECC_NIST_P384)
         {
             return SigningAlgorithm.ECDsaP384;
+        }
+        if (keySpec == KeySpec.ECC_NIST_P521)
+        {
+            return SigningAlgorithm.ECDsaP521;
         }
         if (keySpec == KeySpec.RSA_2048 || keySpec == KeySpec.RSA_3072 || keySpec == KeySpec.RSA_4096)
         {

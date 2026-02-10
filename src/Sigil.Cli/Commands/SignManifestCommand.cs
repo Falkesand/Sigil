@@ -140,7 +140,7 @@ public static class SignManifestCommand
                 catch (ArgumentException)
                 {
                     Console.Error.WriteLine($"Unknown algorithm: {ephemeralAlgorithmName}");
-                    Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, rsa-pss-sha256, ml-dsa-65");
+                    Console.Error.WriteLine("Supported: ecdsa-p256, ecdsa-p384, ecdsa-p521, rsa-pss-sha256, ml-dsa-65");
                     return;
                 }
 

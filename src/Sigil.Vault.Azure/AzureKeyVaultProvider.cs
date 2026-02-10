@@ -188,7 +188,7 @@ public sealed class AzureKeyVaultProvider : IKeyProvider
         {
             byte[] spki;
 
-            if (algorithm == SigningAlgorithm.ECDsaP256 || algorithm == SigningAlgorithm.ECDsaP384)
+            if (algorithm == SigningAlgorithm.ECDsaP256 || algorithm == SigningAlgorithm.ECDsaP384 || algorithm == SigningAlgorithm.ECDsaP521)
             {
                 using var ecdsa = key.Key.ToECDsa(includePrivateParameters: false);
                 spki = ecdsa.ExportSubjectPublicKeyInfo();
