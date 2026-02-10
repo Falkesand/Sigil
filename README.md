@@ -3386,6 +3386,12 @@ sign:
 
 - **Archive/recursive signing** — Sign individual entries inside ZIP, tar.gz, and NuGet packages with an embedded manifest.
 - **Authenticode integration** — Embed Authenticode signatures in PE binaries for Windows OS-level trust recognition.
+- **Trust graph engine** — Build and query cryptographic trust graphs across keys, identities, artifacts, and CI systems. Answer questions like "show me everything transitively dependent on this revoked key."
+- **Key compromise impact analysis** — Instant blast radius assessment when a key leaks: all signed artifacts, affected releases, downstream dependencies, and remediation steps.
+- **Time travel verification** — Replay trust decisions as-of a historical date for audits, legal compliance, and incident investigations (`sigil verify artifact.bin --at 2025-03-03`).
+- **Environment fingerprint attestation** — Prove a build came from an approved golden image by capturing compiler hash, OS digest, and runner identity as a signed attestation.
+- **Anomaly detection** — Behavioral baselines for signing patterns. Detect "validly signed, but not by the usual key for this project" without SaaS.
+- **Plugin system** — Extension architecture for CVE scanners, license policy checks, SBOM diffing, and reproducibility validators.
 - **Ed25519** — When the .NET SDK ships the native API.
 
 ## Install
