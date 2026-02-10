@@ -23,6 +23,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Verify a container image](#verify-a-container-image)
   - [Sign a directory of files](#sign-a-directory-of-files)
   - [Verify a manifest](#verify-a-manifest)
+- [Cross-platform notes](#cross-platform-notes)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -103,6 +104,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Manifest envelope format](#manifest-envelope-format)
 - [Keyless/OIDC signing](#keylessoidc-signing)
   - [Sign in GitHub Actions](#sign-in-github-actions)
+  - [Sign in GitLab CI](#sign-in-gitlab-ci)
   - [Sign with a manual OIDC token](#sign-with-a-manual-oidc-token)
   - [Trust OIDC identities](#trust-oidc-identities)
   - [Verify keyless signatures](#verify-keyless-signatures)
@@ -130,7 +132,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 
 | | Sigil | Sigstore | PGP | X.509 |
 |---|---|---|---|---|
-| Needs an account | No (keyless/OIDC planned) | Yes (OIDC) | No | Yes (CA) |
+| Needs an account | No (keyless/OIDC supported) | Yes (OIDC) | No | Yes (CA) |
 | Trusted timestamping | Yes (RFC 3161) | Yes (Rekor) | No | Yes (RFC 3161) |
 | Needs internet | No | Yes | No | Depends |
 | Stores your email | No | Yes (public log) | Optional | Yes |
@@ -519,6 +521,28 @@ All signatures VERIFIED.
 
 Trust bundles, policies, and discovery all work with manifests — same as file signatures. See [Batch/manifest signing](#batchmanifest-signing) for details.
 
+## Cross-platform notes
+
+Sigil runs on Linux, macOS, and Windows. All multi-line examples in this README use **bash** syntax. The tables below show how to translate to PowerShell and cmd. Where a command differs significantly, a collapsible **PowerShell / cmd** block is provided below it.
+
+**Line continuation:**
+
+| Shell | Syntax | Example |
+|-------|--------|---------|
+| bash / zsh | `\` | `sigil trust add trust.json \` |
+| PowerShell | `` ` `` | ``sigil trust add trust.json ` `` |
+| cmd | `^` | `sigil trust add trust.json ^` |
+
+**Environment variables:**
+
+| Shell | Set | Use |
+|-------|-----|-----|
+| bash / zsh | `export VAR=value` | `$VAR` |
+| PowerShell | `$env:VAR = "value"` | `$env:VAR` |
+| cmd | `set VAR=value` | `%VAR%` |
+
+**Path separators:** Forward slashes (`/`) work everywhere, including PowerShell and cmd. All Sigil path output uses forward slashes.
+
 ## Ephemeral vs persistent vs vault
 
 | | Ephemeral (default) | Persistent (`--key`) | Vault (`--vault`) |
@@ -665,6 +689,23 @@ sigil trust add trust.json \
   --name "CI Pipeline Key"
 ```
 
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust add trust.json `
+  --fingerprint sha256:abc123... `
+  --name "CI Pipeline Key"
+```
+
+```batch
+sigil trust add trust.json ^
+  --fingerprint sha256:abc123... ^
+  --name "CI Pipeline Key"
+```
+
+</details>
+
 Sign the bundle with the authority key. This locks the bundle — nobody can add or remove keys without the authority's private key:
 
 ```
@@ -680,6 +721,23 @@ sigil verify release.tar.gz \
   --trust-bundle trust-signed.json \
   --authority sha256:def456...
 ```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil verify release.tar.gz `
+  --trust-bundle trust-signed.json `
+  --authority sha256:def456...
+```
+
+```batch
+sigil verify release.tar.gz ^
+  --trust-bundle trust-signed.json ^
+  --authority sha256:def456...
+```
+
+</details>
 
 If the file was signed by a key that's in the bundle, you'll see:
 
@@ -715,6 +773,31 @@ sigil trust add trust.json \
   --not-after 2027-01-01T00:00:00Z
 ```
 
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust add trust.json `
+  --fingerprint sha256:abc123... `
+  --name "CI Key" `
+  --scope-names "*.tar.gz" "*.zip" `
+  --scope-labels "ci-pipeline" `
+  --scope-algorithms "ecdsa-p256" `
+  --not-after 2027-01-01T00:00:00Z
+```
+
+```batch
+sigil trust add trust.json ^
+  --fingerprint sha256:abc123... ^
+  --name "CI Key" ^
+  --scope-names "*.tar.gz" "*.zip" ^
+  --scope-labels "ci-pipeline" ^
+  --scope-algorithms "ecdsa-p256" ^
+  --not-after 2027-01-01T00:00:00Z
+```
+
+</details>
+
 This says: trust this key only for signing `.tar.gz` and `.zip` files, only when labeled `ci-pipeline`, only with ECDSA P-256, and only until January 2027. If any of those conditions aren't met, you'll see `[SCOPE_MISMATCH]` or `[EXPIRED]` instead of `[TRUSTED]`.
 
 ### Endorsements
@@ -727,6 +810,25 @@ sigil trust endorse trust.json \
   --endorsed sha256:bbb... \
   --statement "Authorized build key for CI"
 ```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust endorse trust.json `
+  --endorser sha256:aaa... `
+  --endorsed sha256:bbb... `
+  --statement "Authorized build key for CI"
+```
+
+```batch
+sigil trust endorse trust.json ^
+  --endorser sha256:aaa... ^
+  --endorsed sha256:bbb... ^
+  --statement "Authorized build key for CI"
+```
+
+</details>
 
 When Sigil evaluates trust, if it finds a matching endorsement from a key that's directly in the bundle, the endorsed key is treated as trusted:
 
@@ -748,6 +850,23 @@ sigil trust revoke trust.json \
   --fingerprint sha256:abc123... \
   --reason "Key compromised"
 ```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust revoke trust.json `
+  --fingerprint sha256:abc123... `
+  --reason "Key compromised"
+```
+
+```batch
+sigil trust revoke trust.json ^
+  --fingerprint sha256:abc123... ^
+  --reason "Key compromised"
+```
+
+</details>
 
 When Sigil evaluates trust for a revoked key:
 
@@ -1574,6 +1693,21 @@ sigil sign release.tar.gz --vault gcp \
   --vault-key projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
 ```
 
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil sign release.tar.gz --vault gcp `
+  --vault-key projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
+```
+
+```batch
+sigil sign release.tar.gz --vault gcp ^
+  --vault-key projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
+```
+
+</details>
+
 ### PKCS#11 hardware tokens
 
 PKCS#11 is the standard interface for hardware security modules (HSMs), YubiKeys, smart cards, and other cryptographic tokens. The private key never leaves the device — Sigil sends data to the token for signing and receives the signature back.
@@ -1612,10 +1746,13 @@ my-key                                                           # plain key lab
 
 | Device / Software | Library path |
 |-------------------|-------------|
-| SoftHSM2 (testing) | `/usr/lib/softhsm/libsofthsm2.so` |
+| SoftHSM2 (Linux) | `/usr/lib/softhsm/libsofthsm2.so` |
+| SoftHSM2 (Windows) | `C:\SoftHSM2\lib\softhsm2.dll` |
 | YubiKey (macOS) | `/usr/local/lib/libykcs11.dylib` |
 | YubiKey (Linux) | `/usr/lib/libykcs11.so` |
-| OpenSC (smart cards) | `/usr/lib/opensc-pkcs11.so` |
+| YubiKey (Windows) | `C:\Program Files\Yubico\Yubico PIV Tool\bin\libykcs11.dll` |
+| OpenSC (Linux/macOS) | `/usr/lib/opensc-pkcs11.so` |
+| OpenSC (Windows) | `C:\Program Files\OpenSC Project\OpenSC\minidriver\opensc-pkcs11.dll` |
 | Thales Luna HSM | `/usr/safenet/lunaclient/lib/libCryptoki2_64.so` |
 | AWS CloudHSM | `/opt/cloudhsm/lib/libcloudhsm_pkcs11.so` |
 
@@ -1946,6 +2083,11 @@ export SIGIL_PASSPHRASE="my secret"
 $env:SIGIL_PASSPHRASE = "my secret"
 ```
 
+```batch
+:: Windows (cmd) — set in current session
+set SIGIL_PASSPHRASE=my secret
+```
+
 The `--passphrase` CLI argument takes precedence over the environment variable if both are set.
 
 ### Sign commits and tags
@@ -2164,6 +2306,10 @@ export SIGIL_REGISTRY_PASSWORD=mytoken
 # Windows (PowerShell)
 $env:SIGIL_REGISTRY_USERNAME = "myuser"
 $env:SIGIL_REGISTRY_PASSWORD = "mytoken"
+
+# Windows (cmd)
+set SIGIL_REGISTRY_USERNAME=myuser
+set SIGIL_REGISTRY_PASSWORD=mytoken
 ```
 
 **Token auth** is handled transparently. When a registry returns a 401 with a `Www-Authenticate: Bearer` challenge, Sigil requests a token from the auth endpoint and caches it for subsequent requests.
@@ -2457,6 +2603,25 @@ sigil trust identity-add trust.json \
   --name "GitHub CI (myorg)"
 ```
 
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust identity-add trust.json `
+  --issuer https://token.actions.githubusercontent.com `
+  --subject "repo:myorg/*" `
+  --name "GitHub CI (myorg)"
+```
+
+```batch
+sigil trust identity-add trust.json ^
+  --issuer https://token.actions.githubusercontent.com ^
+  --subject "repo:myorg/*" ^
+  --name "GitHub CI (myorg)"
+```
+
+</details>
+
 For GitLab CI:
 
 ```
@@ -2465,6 +2630,25 @@ sigil trust identity-add trust.json \
   --subject "project_path:myorg/myproject:*" \
   --name "GitLab CI"
 ```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust identity-add trust.json `
+  --issuer "https://gitlab.com" `
+  --subject "project_path:myorg/myproject:*" `
+  --name "GitLab CI"
+```
+
+```batch
+sigil trust identity-add trust.json ^
+  --issuer "https://gitlab.com" ^
+  --subject "project_path:myorg/myproject:*" ^
+  --name "GitLab CI"
+```
+
+</details>
 
 The `--subject` supports glob patterns — `repo:myorg/*` trusts any repository in the `myorg` organization (GitHub), `project_path:myorg/myproject:*` trusts any ref in a GitLab project. The `--issuer` must match exactly (no URL normalization).
 
@@ -2475,6 +2659,23 @@ sigil trust identity-remove trust.json \
   --issuer https://token.actions.githubusercontent.com \
   --subject "repo:myorg/*"
 ```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust identity-remove trust.json `
+  --issuer https://token.actions.githubusercontent.com `
+  --subject "repo:myorg/*"
+```
+
+```batch
+sigil trust identity-remove trust.json ^
+  --issuer https://token.actions.githubusercontent.com ^
+  --subject "repo:myorg/*"
+```
+
+</details>
 
 ### Verify keyless signatures
 
@@ -2849,9 +3050,26 @@ A typical GitHub Actions workflow using the local tool:
 - run: dotnet sigil verify-image ghcr.io/myorg/myapp:${{ github.sha }} --policy policy.json
 ```
 
+A typical GitLab CI pipeline using keyless signing:
+
+```yaml
+# .gitlab-ci.yml
+sign:
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  id_tokens:
+    SIGIL_ID_TOKEN:
+      aud: sigil
+  script:
+    - dotnet tool restore
+    - dotnet sigil sign artifact.tar.gz --keyless --timestamp https://freetsa.org/tsr
+    - dotnet sigil verify artifact.tar.gz --trust-bundle trust.json
+  artifacts:
+    paths:
+      - artifact.tar.gz.sig.json
+```
+
 ## What's coming
 
-- **Keyless/OIDC signing** — Authenticate with OIDC (GitHub Actions, Google, Microsoft), get a short-lived certificate, sign without key management. Sigstore-compatible workflow without cloud dependency.
 - **Remote transparency log** — HTTP API for shared/public signing audit logs beyond the local Merkle tree.
 - **Native AOT / self-contained binaries** — Single-binary distribution without requiring the .NET SDK.
 - **Archive/recursive signing** — Sign individual entries inside ZIP, tar.gz, and NuGet packages with an embedded manifest.
