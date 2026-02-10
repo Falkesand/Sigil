@@ -39,6 +39,14 @@ public sealed class MLDsa65Signer : ISigner
         return new MLDsa65Signer(MLDsa.GenerateKey(MLDsaAlgorithm.MLDsa65));
     }
 
+    public static MLDsa65Signer FromPkcs8(byte[] pkcs8)
+    {
+        ArgumentNullException.ThrowIfNull(pkcs8);
+        if (!MLDsa.IsSupported)
+            throw new PlatformNotSupportedException("ML-DSA is not supported on this platform.");
+        return new MLDsa65Signer(MLDsa.ImportPkcs8PrivateKey(pkcs8));
+    }
+
     public static MLDsa65Signer FromPem(ReadOnlySpan<char> pem)
     {
         if (pem.IsEmpty || pem.IsWhiteSpace())

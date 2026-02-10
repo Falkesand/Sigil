@@ -1,11 +1,12 @@
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Org.Webpki.JsonCanonicalizer;
 
 namespace Sigil.LogServer;
 
-public sealed class CheckpointSigner : IDisposable
+public sealed class CheckpointSigner : ICheckpointSigner
 {
     private readonly ECDsa _key;
     private readonly byte[] _publicKeySpki;
@@ -22,6 +23,42 @@ public sealed class CheckpointSigner : IDisposable
         var ecdsa = ECDsa.Create();
         ecdsa.ImportFromPem(pem);
         return new CheckpointSigner(ecdsa);
+    }
+
+    public static CheckpointSigner FromPfx(string pfxPath, string? password = null)
+    {
+        var pfxBytes = File.ReadAllBytes(pfxPath);
+        try
+        {
+            var cert = X509CertificateLoader.LoadPkcs12(
+                pfxBytes, password,
+                X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+            try
+            {
+                var ecKey = cert.GetECDsaPrivateKey()
+                    ?? throw new ArgumentException("PFX does not contain an ECDSA private key.");
+                // Clone the key so cert disposal doesn't invalidate it
+                var ecdsa = ECDsa.Create();
+                var pkcs8 = ecKey.ExportPkcs8PrivateKey();
+                try
+                {
+                    ecdsa.ImportPkcs8PrivateKey(pkcs8, out _);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(pkcs8);
+                }
+                return new CheckpointSigner(ecdsa);
+            }
+            finally
+            {
+                cert.Dispose();
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(pfxBytes);
+        }
     }
 
     public static CheckpointSigner Generate()

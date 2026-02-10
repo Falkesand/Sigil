@@ -77,7 +77,7 @@ public class VaultSignCommandTests : IDisposable
         var result = await CommandTestHelper.InvokeAsync(
             "trust", "sign", bundlePath);
 
-        Assert.Contains("Either --key or --vault is required", result.StdErr);
+        Assert.Contains("Either --key, --vault, or --cert-store is required", result.StdErr);
     }
 
     [Fact]

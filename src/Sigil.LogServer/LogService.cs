@@ -14,12 +14,12 @@ public sealed class LogService : IDisposable
     };
 
     private readonly ILogStore _store;
-    private readonly CheckpointSigner _signer;
+    private readonly ICheckpointSigner _signer;
     private readonly SemaphoreSlim _appendLock = new(1, 1);
     private readonly List<byte[]> _leafHashCache = [];
     private bool _cacheInitialized;
 
-    public LogService(ILogStore store, CheckpointSigner signer)
+    public LogService(ILogStore store, ICheckpointSigner signer)
     {
         _store = store;
         _signer = signer;

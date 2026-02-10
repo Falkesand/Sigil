@@ -15,6 +15,8 @@ public static class GitConfigCommand
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the signing key is encrypted" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider (hashicorp, azure, aws, gcp, pkcs11)" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Key reference in the vault provider" };
+        var certStoreOption = new Option<string?>("--cert-store") { Description = "Certificate thumbprint for Windows Certificate Store" };
+        var storeLocationOption = new Option<string?>("--store-location") { Description = "Store location: CurrentUser (default) or LocalMachine" };
 
         var cmd = new Command("config", "Configure git to use Sigil for commit/tag signing");
         cmd.Add(keyOption);
@@ -22,6 +24,8 @@ public static class GitConfigCommand
         cmd.Add(passphraseOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
+        cmd.Add(certStoreOption);
+        cmd.Add(storeLocationOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -30,6 +34,8 @@ public static class GitConfigCommand
             var passphrase = parseResult.GetValue(passphraseOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
+            var certStoreThumbprint = parseResult.GetValue(certStoreOption);
+            var storeLocationName = parseResult.GetValue(storeLocationOption);
 
             // Validate mutual exclusivity
             if (keyPath is not null && vaultName is not null)
@@ -53,9 +59,30 @@ public static class GitConfigCommand
                 return;
             }
 
-            if (keyPath is null && vaultName is null)
+            if (keyPath is null && vaultName is null && certStoreThumbprint is null)
             {
-                Console.Error.WriteLine("--key or --vault/--vault-key is required.");
+                Console.Error.WriteLine("--key, --vault/--vault-key, or --cert-store is required.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (certStoreThumbprint is not null && keyPath is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --key and --cert-store. Choose one signing method.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (certStoreThumbprint is not null && vaultName is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --vault and --cert-store. Choose one signing method.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (storeLocationName is not null && certStoreThumbprint is null)
+            {
+                Console.Error.WriteLine("--store-location requires --cert-store.");
                 Environment.ExitCode = 1;
                 return;
             }
@@ -90,12 +117,39 @@ public static class GitConfigCommand
                 var sigilPath = FindSigilExecutable();
                 wrapperPath = GenerateVaultWrapper(sigilPath, vaultName, vaultKey!);
             }
+            else if (certStoreThumbprint is not null)
+            {
+                // Certificate store path (Windows only)
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.Error.WriteLine("--cert-store is only supported on Windows.");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                var storeLocation = storeLocationName is not null
+                    ? Enum.Parse<System.Security.Cryptography.X509Certificates.StoreLocation>(storeLocationName, ignoreCase: true)
+                    : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
+                await using var certProvider = new CertStoreKeyProvider(storeLocation);
+                var pubKeyResult = await certProvider.GetPublicKeyAsync(certStoreThumbprint);
+                if (!pubKeyResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Certificate store error: {pubKeyResult.ErrorMessage}");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+
+                fingerprint = KeyFingerprint.Compute(pubKeyResult.Value).Value;
+
+                // Generate cert-store wrapper script
+                var sigilPath = FindSigilExecutable();
+                wrapperPath = GenerateCertStoreWrapper(sigilPath, certStoreThumbprint, storeLocationName);
+            }
             else
             {
                 // PEM path
                 var fullKeyPath = Path.GetFullPath(keyPath!);
 
-                var loadResult = PemSignerLoader.Load(fullKeyPath, passphrase, null);
+                var loadResult = KeyLoader.Load(fullKeyPath, passphrase, null);
                 if (!loadResult.IsSuccess)
                 {
                     Console.Error.WriteLine(loadResult.ErrorMessage);
@@ -205,6 +259,35 @@ public static class GitConfigCommand
             var wrapperPath = Path.Combine(sigilDir, "git-sign.sh");
             var escapedKey = EscapeShellPassphrase(vaultKey);
             var content = $"#!/bin/sh\nexec \"{sigilPath}\" git-sign --vault \"{vaultName}\" --vault-key '{escapedKey}' \"$@\"\n";
+            File.WriteAllText(wrapperPath, content);
+
+            MakeExecutable(wrapperPath);
+
+            return wrapperPath;
+        }
+    }
+
+    private static string GenerateCertStoreWrapper(string sigilPath, string thumbprint, string? storeLocationName)
+    {
+        var sigilDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".sigil");
+        Directory.CreateDirectory(sigilDir);
+
+        var storeLocationArg = storeLocationName is not null
+            ? $" --store-location \"{storeLocationName}\""
+            : "";
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var wrapperPath = Path.Combine(sigilDir, "git-sign.bat");
+            var content = $"@\"{sigilPath}\" git-sign --cert-store \"{EscapeBatchPassphrase(thumbprint)}\"{storeLocationArg} %*\r\n";
+            File.WriteAllText(wrapperPath, content);
+            return wrapperPath;
+        }
+        else
+        {
+            var wrapperPath = Path.Combine(sigilDir, "git-sign.sh");
+            var content = $"#!/bin/sh\nexec \"{sigilPath}\" git-sign --cert-store '{EscapeShellPassphrase(thumbprint)}'{storeLocationArg} \"$@\"\n";
             File.WriteAllText(wrapperPath, content);
 
             MakeExecutable(wrapperPath);

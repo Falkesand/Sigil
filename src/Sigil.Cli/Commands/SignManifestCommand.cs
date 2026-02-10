@@ -20,6 +20,8 @@ public static class SignManifestCommand
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ephemeral default: ecdsa-p256)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
+        var certStoreOption = new Option<string?>("--cert-store") { Description = "Certificate thumbprint for Windows Certificate Store" };
+        var storeLocationOption = new Option<string?>("--store-location") { Description = "Store location: CurrentUser (default) or LocalMachine" };
         var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
         var includeOption = new Option<string?>("--include") { Description = "Glob filter for files (e.g. *.dll)" };
         var logUrlOption = new Option<string?>("--log-url") { Description = "Remote transparency log URL, or 'rekor' for Sigstore public log" };
@@ -34,6 +36,8 @@ public static class SignManifestCommand
         cmd.Add(algorithmOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
+        cmd.Add(certStoreOption);
+        cmd.Add(storeLocationOption);
         cmd.Add(timestampOption);
         cmd.Add(includeOption);
         cmd.Add(logUrlOption);
@@ -49,6 +53,8 @@ public static class SignManifestCommand
             var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
+            var certStoreThumbprint = parseResult.GetValue(certStoreOption);
+            var storeLocationName = parseResult.GetValue(storeLocationOption);
             var tsaUrl = parseResult.GetValue(timestampOption);
             var includeFilter = parseResult.GetValue(includeOption);
             var logUrl = parseResult.GetValue(logUrlOption);
@@ -81,6 +87,24 @@ public static class SignManifestCommand
             if (vaultKey is not null && vaultName is null)
             {
                 Console.Error.WriteLine("--vault is required when using --vault-key.");
+                return;
+            }
+
+            if (certStoreThumbprint is not null && keyPath is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --key and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (certStoreThumbprint is not null && vaultName is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --vault and --cert-store. Choose one signing method.");
+                return;
+            }
+
+            if (storeLocationName is not null && certStoreThumbprint is null)
+            {
+                Console.Error.WriteLine("--store-location requires --cert-store.");
                 return;
             }
 
@@ -121,13 +145,46 @@ public static class SignManifestCommand
                 return;
             }
 
+            // Certificate store signing path (Windows only)
+            if (certStoreThumbprint is not null)
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.Error.WriteLine("--cert-store is only supported on Windows.");
+                    return;
+                }
+                var storeLocation = storeLocationName is not null
+                    ? Enum.Parse<System.Security.Cryptography.X509Certificates.StoreLocation>(storeLocationName, ignoreCase: true)
+                    : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
+                await using var certProvider = new CertStoreKeyProvider(storeLocation);
+                var signerResult = await certProvider.GetSignerAsync(certStoreThumbprint);
+                if (!signerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Certificate store error: {signerResult.ErrorMessage}");
+                    return;
+                }
+
+                using var certSigner = signerResult.Value;
+                var fingerprint = KeyFingerprint.Compute(certSigner.PublicKey);
+
+                var envelope = await SignOrAppendAsync(basePath, filePaths, outputPath, certSigner, fingerprint, label);
+                await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+                await SubmitToLogIfRequestedAsync(envelope, logUrl, logApiKey);
+
+                var json = ManifestSigner.Serialize(envelope);
+                File.WriteAllText(outputPath, json);
+
+                WriteOutput(envelope, outputPath, certSigner, fingerprint, "cert-store");
+                return;
+            }
+
             // Local signing paths (PEM or ephemeral)
             ISigner localSigner;
             bool isEphemeral;
 
             if (keyPath is not null)
             {
-                var loadResult = PemSignerLoader.Load(keyPath, passphrase, algorithmName);
+                var loadResult = KeyLoader.Load(keyPath, passphrase, algorithmName);
                 if (!loadResult.IsSuccess)
                 {
                     Console.Error.WriteLine(loadResult.ErrorMessage);

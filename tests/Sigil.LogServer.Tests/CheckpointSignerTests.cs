@@ -1,12 +1,26 @@
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Org.Webpki.JsonCanonicalizer;
 using Xunit;
 
 namespace Sigil.LogServer.Tests;
 
-public sealed class CheckpointSignerTests
+public sealed class CheckpointSignerTests : IDisposable
 {
+    private readonly string _tempDir;
+
+    public CheckpointSignerTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), "sigil-ckpt-test-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+            Directory.Delete(_tempDir, true);
+    }
     [Fact]
     public void Generate_CreatesValidSignerWithEcdsaP256Key()
     {
@@ -123,5 +137,75 @@ public sealed class CheckpointSignerTests
         // Assert
         var isValid = ecdsa.VerifyData(canonical, signature, HashAlgorithmName.SHA256);
         Assert.True(isValid);
+    }
+
+    [Fact]
+    public void FromPfx_LoadsEcdsaKeyAndSigns()
+    {
+        var pfxPath = CreateEcdsaPfx("ckpt.pfx", "ckpt-pass");
+
+        using var signer = CheckpointSigner.FromPfx(pfxPath, "ckpt-pass");
+
+        Assert.NotEmpty(signer.PublicKeySpki);
+        var signed = signer.SignCheckpoint(1L, "hash", "2026-02-10T14:00:00Z");
+        Assert.NotEmpty(signed);
+    }
+
+    [Fact]
+    public void FromPfx_SignedCheckpoint_IsVerifiable()
+    {
+        var pfxPath = CreateEcdsaPfx("verify.pfx", "verify-pass");
+
+        using var signer = CheckpointSigner.FromPfx(pfxPath, "verify-pass");
+        var signed = signer.SignCheckpoint(50L, "testHash", "2026-02-10T15:00:00Z");
+
+        var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(signed));
+        var parts = decoded.Split('.');
+        var canonical = new JsonCanonicalizer(parts[0]).GetEncodedUTF8();
+        var signature = Convert.FromBase64String(parts[1]);
+
+        using var ecdsa = ECDsa.Create();
+        ecdsa.ImportSubjectPublicKeyInfo(signer.PublicKeySpki, out _);
+        Assert.True(ecdsa.VerifyData(canonical, signature, HashAlgorithmName.SHA256));
+    }
+
+    [Fact]
+    public void FromPfx_WrongPassword_ThrowsCryptographicException()
+    {
+        var pfxPath = CreateEcdsaPfx("wrongpass.pfx", "correct");
+
+        Assert.ThrowsAny<CryptographicException>(
+            () => CheckpointSigner.FromPfx(pfxPath, "wrong"));
+    }
+
+    [Fact]
+    public void FromPfx_NonEcdsaKey_ThrowsArgumentException()
+    {
+        var pfxPath = CreateRsaPfx("rsa.pfx", "rsa-pass");
+
+        Assert.Throws<ArgumentException>(
+            () => CheckpointSigner.FromPfx(pfxPath, "rsa-pass"));
+    }
+
+    private string CreateEcdsaPfx(string fileName, string password)
+    {
+        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var req = new CertificateRequest("CN=CkptTest", ecdsa, HashAlgorithmName.SHA256);
+        using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1));
+        var pfxBytes = cert.Export(X509ContentType.Pfx, password);
+        var pfxPath = Path.Combine(_tempDir, fileName);
+        File.WriteAllBytes(pfxPath, pfxBytes);
+        return pfxPath;
+    }
+
+    private string CreateRsaPfx(string fileName, string password)
+    {
+        using var rsa = RSA.Create(2048);
+        var req = new CertificateRequest("CN=RsaCkpt", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1));
+        var pfxBytes = cert.Export(X509ContentType.Pfx, password);
+        var pfxPath = Path.Combine(_tempDir, fileName);
+        File.WriteAllBytes(pfxPath, pfxBytes);
+        return pfxPath;
     }
 }

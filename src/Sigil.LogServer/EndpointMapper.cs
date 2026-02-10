@@ -11,7 +11,7 @@ public static class EndpointMapper
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    public static void Map(WebApplication app, LogService logService, ILogStore store, CheckpointSigner signer)
+    public static void Map(WebApplication app, LogService logService, ILogStore store, ICheckpointSigner signer)
     {
         app.MapPost("/api/v1/log/entries", async (HttpContext ctx) =>
         {

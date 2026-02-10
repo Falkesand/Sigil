@@ -92,7 +92,7 @@ public class GitSignVaultArgTests : IDisposable
             stdin, stdout, stderr);
 
         Assert.Equal(1, exitCode);
-        Assert.Contains("--key or --vault/--vault-key required", stderr.ToString());
+        Assert.Contains("--key, --vault/--vault-key, or --cert-store required", stderr.ToString());
     }
 
     [Fact]

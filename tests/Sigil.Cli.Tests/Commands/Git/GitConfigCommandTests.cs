@@ -103,6 +103,6 @@ public class GitConfigCommandTests : IDisposable
     {
         var result = await CommandTestHelper.InvokeAsync("git", "config");
 
-        Assert.Contains("--key or --vault/--vault-key is required", result.StdErr);
+        Assert.Contains("--key, --vault/--vault-key, or --cert-store is required", result.StdErr);
     }
 }

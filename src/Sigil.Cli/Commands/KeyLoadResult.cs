@@ -4,10 +4,10 @@ namespace Sigil.Cli.Commands;
 
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types",
     Justification = "Factory methods Ok/Fail are the idiomatic API for Result types")]
-public readonly record struct PemLoadResult<T>
+public readonly record struct KeyLoadResult<T>
 {
     private readonly T? _value;
-    private readonly PemLoadErrorKind? _errorKind;
+    private readonly KeyLoadErrorKind? _errorKind;
     private readonly string? _errorMessage;
 
     public bool IsSuccess { get; }
@@ -16,7 +16,7 @@ public readonly record struct PemLoadResult<T>
         ? _value!
         : throw new InvalidOperationException("Cannot access Value on a failed result.");
 
-    public PemLoadErrorKind ErrorKind => !IsSuccess
+    public KeyLoadErrorKind ErrorKind => !IsSuccess
         ? _errorKind!.Value
         : throw new InvalidOperationException("Cannot access ErrorKind on a successful result.");
 
@@ -24,7 +24,7 @@ public readonly record struct PemLoadResult<T>
         ? _errorMessage!
         : throw new InvalidOperationException("Cannot access ErrorMessage on a successful result.");
 
-    private PemLoadResult(T? value, PemLoadErrorKind? errorKind, string? errorMessage, bool isSuccess)
+    private KeyLoadResult(T? value, KeyLoadErrorKind? errorKind, string? errorMessage, bool isSuccess)
     {
         _value = value;
         _errorKind = errorKind;
@@ -32,8 +32,8 @@ public readonly record struct PemLoadResult<T>
         IsSuccess = isSuccess;
     }
 
-    public static PemLoadResult<T> Ok(T value) => new(value, null, null, true);
+    public static KeyLoadResult<T> Ok(T value) => new(value, null, null, true);
 
-    public static PemLoadResult<T> Fail(PemLoadErrorKind errorKind, string errorMessage) =>
+    public static KeyLoadResult<T> Fail(KeyLoadErrorKind errorKind, string errorMessage) =>
         new(default, errorKind, errorMessage, false);
 }
