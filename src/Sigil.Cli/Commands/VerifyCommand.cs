@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Sigil.Discovery;
+using Sigil.Keyless;
 using Sigil.Policy;
 using Sigil.Signing;
 using Sigil.Trust;
@@ -104,12 +105,12 @@ public static class VerifyCommand
             TrustEvaluationResult? trustResult = null;
             if (discoverUri is not null)
             {
-                trustResult = await DiscoverAndEvaluateTrust(discoverUri, authority, result, envelope.Subject.Name);
+                trustResult = await DiscoverAndEvaluateTrust(discoverUri, authority, result, envelope);
             }
             // File-based trust evaluation
             else if (trustBundlePath is not null)
             {
-                trustResult = EvaluateTrust(trustBundlePath, authority, result, envelope.Subject.Name);
+                trustResult = await EvaluateTrustAsync(trustBundlePath, authority, result, envelope);
             }
 
             foreach (var sig in result.Signatures)
@@ -128,6 +129,7 @@ public static class VerifyCommand
                         {
                             TrustDecision.Trusted => "TRUSTED",
                             TrustDecision.TrustedViaEndorsement => "TRUSTED",
+                            TrustDecision.TrustedViaOidc => "TRUSTED (OIDC)",
                             TrustDecision.Expired => "EXPIRED",
                             TrustDecision.ScopeMismatch => "SCOPE_MISMATCH",
                             TrustDecision.Revoked => "REVOKED",
@@ -159,6 +161,12 @@ public static class VerifyCommand
                     Console.WriteLine($"           Timestamp: {ts.Timestamp:yyyy-MM-ddTHH:mm:ssZ} (verified)");
                 else if (sig.TimestampInfo is { IsValid: false } tsErr)
                     Console.WriteLine($"           Timestamp: INVALID ({tsErr.Error})");
+
+                // Display OIDC info from envelope
+                var envelopeEntry = envelope.Signatures
+                    .FirstOrDefault(e => string.Equals(e.KeyId, sig.KeyId, StringComparison.Ordinal));
+                if (envelopeEntry?.OidcIdentity is not null)
+                    Console.WriteLine($"           OIDC: {envelopeEntry.OidcIdentity} (from {envelopeEntry.OidcIssuer})");
             }
 
             if (trustResult is not null)
@@ -188,7 +196,7 @@ public static class VerifyCommand
         string discoverUri,
         string? authority,
         VerificationResult verification,
-        string? artifactName)
+        SignatureEnvelope envelope)
     {
         var dispatcher = new DiscoveryDispatcher();
         var discoveryResult = await dispatcher.ResolveAsync(discoverUri);
@@ -237,14 +245,15 @@ public static class VerifyCommand
             return null;
         }
 
-        return TrustEvaluator.Evaluate(verification, bundle, artifactName);
+        var oidcInfo = await VerifyOidcEntriesAsync(envelope);
+        return TrustEvaluator.Evaluate(verification, bundle, envelope.Subject.Name, oidcInfo: oidcInfo);
     }
 
-    private static TrustEvaluationResult? EvaluateTrust(
+    private static async Task<TrustEvaluationResult?> EvaluateTrustAsync(
         string trustBundlePath,
         string? authority,
         VerificationResult verification,
-        string? artifactName)
+        SignatureEnvelope envelope)
     {
         if (!File.Exists(trustBundlePath))
         {
@@ -286,7 +295,19 @@ public static class VerifyCommand
             return null;
         }
 
-        return TrustEvaluator.Evaluate(verification, bundle, artifactName);
+        var oidcInfo = await VerifyOidcEntriesAsync(envelope);
+        return TrustEvaluator.Evaluate(verification, bundle, envelope.Subject.Name, oidcInfo: oidcInfo);
+    }
+
+    private static async Task<IReadOnlyDictionary<string, OidcVerificationInfo>?> VerifyOidcEntriesAsync(
+        SignatureEnvelope envelope)
+    {
+        if (!envelope.Signatures.Any(s => s.OidcToken is not null))
+            return null;
+
+        using var verifier = new OidcVerifier();
+        var results = await verifier.VerifyAllAsync(envelope);
+        return results.Count > 0 ? results : null;
     }
 
     private static void EvaluatePolicy(

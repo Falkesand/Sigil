@@ -23,6 +23,7 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Verify a container image](#verify-a-container-image)
   - [Sign a directory of files](#sign-a-directory-of-files)
   - [Verify a manifest](#verify-a-manifest)
+- [Cross-platform notes](#cross-platform-notes)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
 - [Multiple signatures](#multiple-signatures)
@@ -101,6 +102,13 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Manifests with trust bundles](#manifests-with-trust-bundles)
   - [How manifest signing works](#how-manifest-signing-works)
   - [Manifest envelope format](#manifest-envelope-format)
+- [Keyless/OIDC signing](#keylessoidc-signing)
+  - [Sign in GitHub Actions](#sign-in-github-actions)
+  - [Sign in GitLab CI](#sign-in-gitlab-ci)
+  - [Sign with a manual OIDC token](#sign-with-a-manual-oidc-token)
+  - [Trust OIDC identities](#trust-oidc-identities)
+  - [Verify keyless signatures](#verify-keyless-signatures)
+  - [How keyless signing works](#how-keyless-signing-works)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -124,7 +132,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 
 | | Sigil | Sigstore | PGP | X.509 |
 |---|---|---|---|---|
-| Needs an account | No (keyless/OIDC planned) | Yes (OIDC) | No | Yes (CA) |
+| Needs an account | No (keyless/OIDC supported) | Yes (OIDC) | No | Yes (CA) |
 | Trusted timestamping | Yes (RFC 3161) | Yes (Rekor) | No | Yes (RFC 3161) |
 | Needs internet | No | Yes | No | Depends |
 | Stores your email | No | Yes (public log) | Optional | Yes |
@@ -513,6 +521,28 @@ All signatures VERIFIED.
 
 Trust bundles, policies, and discovery all work with manifests — same as file signatures. See [Batch/manifest signing](#batchmanifest-signing) for details.
 
+## Cross-platform notes
+
+Sigil runs on Linux, macOS, and Windows. All multi-line examples in this README use **bash** syntax. The tables below show how to translate to PowerShell and cmd. Where a command differs significantly, a collapsible **PowerShell / cmd** block is provided below it.
+
+**Line continuation:**
+
+| Shell | Syntax | Example |
+|-------|--------|---------|
+| bash / zsh | `\` | `sigil trust add trust.json \` |
+| PowerShell | `` ` `` | ``sigil trust add trust.json ` `` |
+| cmd | `^` | `sigil trust add trust.json ^` |
+
+**Environment variables:**
+
+| Shell | Set | Use |
+|-------|-----|-----|
+| bash / zsh | `export VAR=value` | `$VAR` |
+| PowerShell | `$env:VAR = "value"` | `$env:VAR` |
+| cmd | `set VAR=value` | `%VAR%` |
+
+**Path separators:** Forward slashes (`/`) work everywhere, including PowerShell and cmd. All Sigil path output uses forward slashes.
+
 ## Ephemeral vs persistent vs vault
 
 | | Ephemeral (default) | Persistent (`--key`) | Vault (`--vault`) |
@@ -659,6 +689,23 @@ sigil trust add trust.json \
   --name "CI Pipeline Key"
 ```
 
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust add trust.json `
+  --fingerprint sha256:abc123... `
+  --name "CI Pipeline Key"
+```
+
+```batch
+sigil trust add trust.json ^
+  --fingerprint sha256:abc123... ^
+  --name "CI Pipeline Key"
+```
+
+</details>
+
 Sign the bundle with the authority key. This locks the bundle — nobody can add or remove keys without the authority's private key:
 
 ```
@@ -674,6 +721,23 @@ sigil verify release.tar.gz \
   --trust-bundle trust-signed.json \
   --authority sha256:def456...
 ```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil verify release.tar.gz `
+  --trust-bundle trust-signed.json `
+  --authority sha256:def456...
+```
+
+```batch
+sigil verify release.tar.gz ^
+  --trust-bundle trust-signed.json ^
+  --authority sha256:def456...
+```
+
+</details>
 
 If the file was signed by a key that's in the bundle, you'll see:
 
@@ -709,6 +773,31 @@ sigil trust add trust.json \
   --not-after 2027-01-01T00:00:00Z
 ```
 
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust add trust.json `
+  --fingerprint sha256:abc123... `
+  --name "CI Key" `
+  --scope-names "*.tar.gz" "*.zip" `
+  --scope-labels "ci-pipeline" `
+  --scope-algorithms "ecdsa-p256" `
+  --not-after 2027-01-01T00:00:00Z
+```
+
+```batch
+sigil trust add trust.json ^
+  --fingerprint sha256:abc123... ^
+  --name "CI Key" ^
+  --scope-names "*.tar.gz" "*.zip" ^
+  --scope-labels "ci-pipeline" ^
+  --scope-algorithms "ecdsa-p256" ^
+  --not-after 2027-01-01T00:00:00Z
+```
+
+</details>
+
 This says: trust this key only for signing `.tar.gz` and `.zip` files, only when labeled `ci-pipeline`, only with ECDSA P-256, and only until January 2027. If any of those conditions aren't met, you'll see `[SCOPE_MISMATCH]` or `[EXPIRED]` instead of `[TRUSTED]`.
 
 ### Endorsements
@@ -721,6 +810,25 @@ sigil trust endorse trust.json \
   --endorsed sha256:bbb... \
   --statement "Authorized build key for CI"
 ```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust endorse trust.json `
+  --endorser sha256:aaa... `
+  --endorsed sha256:bbb... `
+  --statement "Authorized build key for CI"
+```
+
+```batch
+sigil trust endorse trust.json ^
+  --endorser sha256:aaa... ^
+  --endorsed sha256:bbb... ^
+  --statement "Authorized build key for CI"
+```
+
+</details>
 
 When Sigil evaluates trust, if it finds a matching endorsement from a key that's directly in the bundle, the endorsed key is treated as trusted:
 
@@ -742,6 +850,23 @@ sigil trust revoke trust.json \
   --fingerprint sha256:abc123... \
   --reason "Key compromised"
 ```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust revoke trust.json `
+  --fingerprint sha256:abc123... `
+  --reason "Key compromised"
+```
+
+```batch
+sigil trust revoke trust.json ^
+  --fingerprint sha256:abc123... ^
+  --reason "Key compromised"
+```
+
+</details>
 
 When Sigil evaluates trust for a revoked key:
 
@@ -1568,6 +1693,21 @@ sigil sign release.tar.gz --vault gcp \
   --vault-key projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
 ```
 
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil sign release.tar.gz --vault gcp `
+  --vault-key projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
+```
+
+```batch
+sigil sign release.tar.gz --vault gcp ^
+  --vault-key projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1
+```
+
+</details>
+
 ### PKCS#11 hardware tokens
 
 PKCS#11 is the standard interface for hardware security modules (HSMs), YubiKeys, smart cards, and other cryptographic tokens. The private key never leaves the device — Sigil sends data to the token for signing and receives the signature back.
@@ -1606,10 +1746,13 @@ my-key                                                           # plain key lab
 
 | Device / Software | Library path |
 |-------------------|-------------|
-| SoftHSM2 (testing) | `/usr/lib/softhsm/libsofthsm2.so` |
+| SoftHSM2 (Linux) | `/usr/lib/softhsm/libsofthsm2.so` |
+| SoftHSM2 (Windows) | `C:\SoftHSM2\lib\softhsm2.dll` |
 | YubiKey (macOS) | `/usr/local/lib/libykcs11.dylib` |
 | YubiKey (Linux) | `/usr/lib/libykcs11.so` |
-| OpenSC (smart cards) | `/usr/lib/opensc-pkcs11.so` |
+| YubiKey (Windows) | `C:\Program Files\Yubico\Yubico PIV Tool\bin\libykcs11.dll` |
+| OpenSC (Linux/macOS) | `/usr/lib/opensc-pkcs11.so` |
+| OpenSC (Windows) | `C:\Program Files\OpenSC Project\OpenSC\minidriver\opensc-pkcs11.dll` |
 | Thales Luna HSM | `/usr/safenet/lunaclient/lib/libCryptoki2_64.so` |
 | AWS CloudHSM | `/opt/cloudhsm/lib/libcloudhsm_pkcs11.so` |
 
@@ -1940,6 +2083,11 @@ export SIGIL_PASSPHRASE="my secret"
 $env:SIGIL_PASSPHRASE = "my secret"
 ```
 
+```batch
+:: Windows (cmd) — set in current session
+set SIGIL_PASSPHRASE=my secret
+```
+
 The `--passphrase` CLI argument takes precedence over the environment variable if both are set.
 
 ### Sign commits and tags
@@ -2158,6 +2306,10 @@ export SIGIL_REGISTRY_PASSWORD=mytoken
 # Windows (PowerShell)
 $env:SIGIL_REGISTRY_USERNAME = "myuser"
 $env:SIGIL_REGISTRY_PASSWORD = "mytoken"
+
+# Windows (cmd)
+set SIGIL_REGISTRY_USERNAME=myuser
+set SIGIL_REGISTRY_PASSWORD=mytoken
 ```
 
 **Token auth** is handled transparently. When a registry returns a 401 with a `Www-Authenticate: Bearer` challenge, Sigil requests a token from the auth endpoint and caches it for subsequent requests.
@@ -2401,11 +2553,174 @@ The `.manifest.sig.json` envelope:
 
 The `kind` field distinguishes manifest envelopes from single-file envelopes (`"artifact"`). Subjects are ordered deterministically by name. Each signature covers the entire subjects array — there are no per-file signatures.
 
+## Keyless/OIDC signing
+
+Keyless signing lets you sign artifacts using your CI identity (GitHub Actions, GitLab CI, etc.) without managing any keys. An ephemeral key pair is generated, bound to your OIDC token, and discarded after signing. The OIDC token is embedded in the signature envelope so verifiers can confirm who signed it.
+
+### Sign in GitHub Actions
+
+In a GitHub Actions workflow, Sigil auto-detects the OIDC environment:
+
+```yaml
+- name: Sign artifact
+  run: sigil sign artifact.tar.gz --keyless --timestamp https://freetsa.org/tsr
+```
+
+The `--timestamp` flag is required for keyless signing — ephemeral keys need timestamps for trust evaluation. Sigil requests a token from GitHub's OIDC provider, binds it to the ephemeral key via the `aud` claim, signs the artifact, and embeds the JWT in the envelope.
+
+### Sign in GitLab CI
+
+In a GitLab CI pipeline, configure an `id_token` with audience `sigil` and Sigil auto-detects the `SIGIL_ID_TOKEN` environment variable:
+
+```yaml
+# .gitlab-ci.yml
+sign:
+  id_tokens:
+    SIGIL_ID_TOKEN:
+      aud: sigil
+  script:
+    - sigil sign artifact.tar.gz --keyless --timestamp https://freetsa.org/tsr
+```
+
+GitLab CI tokens have a fixed audience set in `.gitlab-ci.yml` (no runtime API for dynamic audiences). Sigil accepts `aud: sigil` as a valid generic audience during verification.
+
+### Sign with a manual OIDC token
+
+For other OIDC providers or testing, pass the token directly:
+
+```
+sigil sign artifact.tar.gz --keyless --oidc-token <jwt> --timestamp https://freetsa.org/tsr
+```
+
+### Trust OIDC identities
+
+Add trusted OIDC identities to a trust bundle:
+
+```
+sigil trust identity-add trust.json \
+  --issuer https://token.actions.githubusercontent.com \
+  --subject "repo:myorg/*" \
+  --name "GitHub CI (myorg)"
+```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust identity-add trust.json `
+  --issuer https://token.actions.githubusercontent.com `
+  --subject "repo:myorg/*" `
+  --name "GitHub CI (myorg)"
+```
+
+```batch
+sigil trust identity-add trust.json ^
+  --issuer https://token.actions.githubusercontent.com ^
+  --subject "repo:myorg/*" ^
+  --name "GitHub CI (myorg)"
+```
+
+</details>
+
+For GitLab CI:
+
+```
+sigil trust identity-add trust.json \
+  --issuer "https://gitlab.com" \
+  --subject "project_path:myorg/myproject:*" \
+  --name "GitLab CI"
+```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust identity-add trust.json `
+  --issuer "https://gitlab.com" `
+  --subject "project_path:myorg/myproject:*" `
+  --name "GitLab CI"
+```
+
+```batch
+sigil trust identity-add trust.json ^
+  --issuer "https://gitlab.com" ^
+  --subject "project_path:myorg/myproject:*" ^
+  --name "GitLab CI"
+```
+
+</details>
+
+The `--subject` supports glob patterns — `repo:myorg/*` trusts any repository in the `myorg` organization (GitHub), `project_path:myorg/myproject:*` trusts any ref in a GitLab project. The `--issuer` must match exactly (no URL normalization).
+
+Remove an identity:
+
+```
+sigil trust identity-remove trust.json \
+  --issuer https://token.actions.githubusercontent.com \
+  --subject "repo:myorg/*"
+```
+
+<details>
+<summary>PowerShell / cmd</summary>
+
+```powershell
+sigil trust identity-remove trust.json `
+  --issuer https://token.actions.githubusercontent.com `
+  --subject "repo:myorg/*"
+```
+
+```batch
+sigil trust identity-remove trust.json ^
+  --issuer https://token.actions.githubusercontent.com ^
+  --subject "repo:myorg/*"
+```
+
+</details>
+
+### Verify keyless signatures
+
+Verification works the same as regular signatures. When a trust bundle contains OIDC identities, Sigil fetches the issuer's JWKS to validate the embedded JWT:
+
+```
+sigil verify artifact.tar.gz --trust-bundle trust.json
+```
+
+Output includes OIDC identity info:
+
+```
+Artifact: artifact.tar.gz
+Digests: MATCH
+  [TRUSTED (OIDC)] sha256:abc123... (GitHub CI (myorg))
+           OIDC: repo:myorg/myrepo:ref:refs/heads/main (from https://token.actions.githubusercontent.com)
+           Timestamp: 2026-02-10T10:00:00Z (verified)
+
+All signatures TRUSTED.
+```
+
+### How keyless signing works
+
+1. **Generate ephemeral key** — Sigil creates a throwaway ECDSA P-256 key pair in memory.
+2. **Compute audience** — The audience is `sigil:sha256:<SPKI-fingerprint>`, cryptographically binding the OIDC token to this specific key.
+3. **Acquire OIDC token** — In GitHub Actions, Sigil calls the `ACTIONS_ID_TOKEN_REQUEST_URL` API with the audience. In GitLab CI, Sigil reads the pre-configured `SIGIL_ID_TOKEN` environment variable. For manual mode, the user provides the token directly.
+4. **Sign artifact** — The ephemeral key signs the artifact using the same payload format as regular signatures.
+5. **Embed OIDC metadata** — The signature entry includes `oidcToken` (the raw JWT), `oidcIssuer`, and `oidcIdentity` fields.
+6. **Apply timestamp** — An RFC 3161 timestamp is mandatory for keyless signatures.
+7. **Discard key** — The ephemeral private key is discarded after signing.
+
+During verification:
+1. **Parse JWT** — Extract issuer, subject, audience, and key ID from the embedded JWT.
+2. **Fetch JWKS** — Retrieve the issuer's public keys via `{issuer}/.well-known/openid-configuration` → `jwks_uri`.
+3. **Verify JWT signature** — Validate the JWT using the matching JWK (RS256 or ES256).
+4. **Check audience binding** — Confirm the JWT's `aud` matches `sigil:sha256:<SPKI-fingerprint>` of the signing key, or the generic audience `sigil` (accepted during verification to support providers like GitLab CI that use fixed audiences).
+5. **Evaluate trust** — Match the JWT's issuer and subject against the trust bundle's `identities` list using glob patterns.
+
+The audience binding prevents token reuse: an OIDC token acquired for one ephemeral key cannot be replayed with a different key, because the audience contains the key's fingerprint. GitLab CI tokens use a generic `sigil` audience (no per-key binding), so security relies on short-lived tokens, issuer+subject identity matching in the trust bundle, and mandatory timestamps.
+
 ## CLI reference
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
-sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
+sigil sign <file> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil attest <file> --predicate <json> --type <type> [--key <private.pem>] [--vault <provider>] [--vault-key <reference>] [--output path] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
@@ -2416,6 +2731,8 @@ sigil trust remove <bundle> --fingerprint <fp>
 sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
 sigil trust sign <bundle> --key <private.pem> | --vault <provider> --vault-key <reference> [-o path] [--passphrase "pass"]
 sigil trust revoke <bundle> --fingerprint <fp> [--reason "text"]
+sigil trust identity-add <bundle> --issuer <url> --subject <pattern> [--name "display name"] [--not-after date]
+sigil trust identity-remove <bundle> --issuer <url> --subject <pattern>
 sigil trust show <bundle>
 sigil log append <envelope> [--log <path>] [--signature-index <n>]
 sigil log verify [--log <path>] [--checkpoint <path>]
@@ -2438,12 +2755,15 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 - `--passphrase` encrypts the private key
 - `--algorithm` selects the signing algorithm (default: `ecdsa-p256`)
 
-**sign**: Sign a file. Three signing modes:
-- Without `--key` or `--vault`: ephemeral mode (key generated in memory, discarded after signing)
+**sign**: Sign a file. Four signing modes:
+- Without `--key`, `--vault`, or `--keyless`: ephemeral mode (key generated in memory, discarded after signing)
 - With `--key`: persistent mode (loads private key from PEM file, algorithm auto-detected)
 - With `--vault` and `--vault-key`: vault mode (private key never leaves the vault)
-- `--vault` and `--key` are mutually exclusive
-- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
+- With `--keyless`: keyless mode (ephemeral key + OIDC identity binding via GitHub Actions, GitLab CI, or `--oidc-token`)
+- `--key`, `--vault`, and `--keyless` are mutually exclusive
+- `--keyless` requires `--timestamp` (ephemeral keys need timestamps for trust evaluation)
+- `--oidc-token` provides a manual OIDC JWT (requires `--keyless`); without it, the token is acquired from GitHub Actions or GitLab CI
+- `--algorithm` only applies to ephemeral and keyless modes (default: `ecdsa-p256`)
 - `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (non-fatal on failure)
 - SBOM format is auto-detected for CycloneDX and SPDX JSON files
 
@@ -2487,7 +2807,16 @@ sigil git config --key <private.pem> | --vault <provider> --vault-key <reference
 
 **trust revoke**: Revoke a key in an unsigned bundle. The key remains in the key list but is marked as revoked. Revoked keys are rejected during trust evaluation. The bundle must be re-signed after adding revocations.
 
-**trust show**: Display the contents of a trust bundle (keys, endorsements, revocations, signature status).
+**trust identity-add**: Add a trusted OIDC identity to an unsigned bundle.
+- `--issuer` is the OIDC issuer URL (exact match during verification)
+- `--subject` is a glob pattern matching the JWT `sub` claim (e.g., `repo:myorg/*`)
+- `--name` is an optional display name for the identity
+- `--not-after` sets an expiry date for the identity trust entry
+
+**trust identity-remove**: Remove a trusted OIDC identity from an unsigned bundle.
+- Matches on both `--issuer` and `--subject` (both required)
+
+**trust show**: Display the contents of a trust bundle (keys, endorsements, identities, revocations, signature status).
 
 **log append**: Append a signing event to the transparency log.
 - `<envelope>` is the path to a `.sig.json` file
@@ -2721,9 +3050,26 @@ A typical GitHub Actions workflow using the local tool:
 - run: dotnet sigil verify-image ghcr.io/myorg/myapp:${{ github.sha }} --policy policy.json
 ```
 
+A typical GitLab CI pipeline using keyless signing:
+
+```yaml
+# .gitlab-ci.yml
+sign:
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  id_tokens:
+    SIGIL_ID_TOKEN:
+      aud: sigil
+  script:
+    - dotnet tool restore
+    - dotnet sigil sign artifact.tar.gz --keyless --timestamp https://freetsa.org/tsr
+    - dotnet sigil verify artifact.tar.gz --trust-bundle trust.json
+  artifacts:
+    paths:
+      - artifact.tar.gz.sig.json
+```
+
 ## What's coming
 
-- **Keyless/OIDC signing** — Authenticate with OIDC (GitHub Actions, Google, Microsoft), get a short-lived certificate, sign without key management. Sigstore-compatible workflow without cloud dependency.
 - **Remote transparency log** — HTTP API for shared/public signing audit logs beyond the local Merkle tree.
 - **Native AOT / self-contained binaries** — Single-binary distribution without requiring the .NET SDK.
 - **Archive/recursive signing** — Sign individual entries inside ZIP, tar.gz, and NuGet packages with an embedded manifest.

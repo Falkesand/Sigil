@@ -1,6 +1,7 @@
 using System.CommandLine;
 using Sigil.Cli.Vault;
 using Sigil.Crypto;
+using Sigil.Keyless;
 using Sigil.Keys;
 using Sigil.Signing;
 using Sigil.Timestamping;
@@ -20,6 +21,8 @@ public static class SignCommand
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
         var timestampOption = new Option<string?>("--timestamp") { Description = "TSA URL for RFC 3161 timestamping" };
+        var keylessOption = new Option<bool>("--keyless") { Description = "Use keyless/OIDC signing with ephemeral keys" };
+        var oidcTokenOption = new Option<string?>("--oidc-token") { Description = "OIDC token for keyless signing (auto-detected from CI if omitted)" };
 
         var cmd = new Command("sign", "Sign an artifact and produce a detached signature envelope");
         cmd.Add(artifactArg);
@@ -31,6 +34,8 @@ public static class SignCommand
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
         cmd.Add(timestampOption);
+        cmd.Add(keylessOption);
+        cmd.Add(oidcTokenOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -43,6 +48,8 @@ public static class SignCommand
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
             var tsaUrl = parseResult.GetValue(timestampOption);
+            var keyless = parseResult.GetValue(keylessOption);
+            var oidcToken = parseResult.GetValue(oidcTokenOption);
 
             if (!artifact.Exists)
             {
@@ -51,6 +58,30 @@ public static class SignCommand
             }
 
             // Validate mutual exclusivity
+            if (keyless && keyPath is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --keyless and --key. Choose one signing method.");
+                return;
+            }
+
+            if (keyless && vaultName is not null)
+            {
+                Console.Error.WriteLine("Cannot use both --keyless and --vault. Choose one signing method.");
+                return;
+            }
+
+            if (keyless && tsaUrl is null)
+            {
+                Console.Error.WriteLine("--timestamp is required for keyless signing (ephemeral keys need timestamps for trust).");
+                return;
+            }
+
+            if (oidcToken is not null && !keyless)
+            {
+                Console.Error.WriteLine("--oidc-token requires --keyless.");
+                return;
+            }
+
             if (vaultName is not null && keyPath is not null)
             {
                 Console.Error.WriteLine("Cannot use both --key and --vault. Choose one signing method.");
@@ -66,6 +97,57 @@ public static class SignCommand
             if (vaultKey is not null && vaultName is null)
             {
                 Console.Error.WriteLine("--vault is required when using --vault-key.");
+                return;
+            }
+
+            // Keyless/OIDC signing path
+            if (keyless)
+            {
+                var ephemeralAlgorithmName = algorithmName ?? "ecdsa-p256";
+                SigningAlgorithm keylessAlgorithm;
+                try
+                {
+                    keylessAlgorithm = SigningAlgorithmExtensions.ParseAlgorithm(ephemeralAlgorithmName);
+                }
+                catch (ArgumentException)
+                {
+                    Console.Error.WriteLine($"Unknown algorithm: {ephemeralAlgorithmName}");
+                    return;
+                }
+
+                var providerResult = OidcTokenProviderFactory.Create(oidcToken);
+                if (!providerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"OIDC error: {providerResult.ErrorMessage}");
+                    return;
+                }
+
+                var keylessSignerResult = await KeylessSigner.CreateAsync(
+                    providerResult.Value, keylessAlgorithm);
+                if (!keylessSignerResult.IsSuccess)
+                {
+                    Console.Error.WriteLine($"Keyless signing error: {keylessSignerResult.ErrorMessage}");
+                    return;
+                }
+
+                using var keylessSigner = keylessSignerResult.Value;
+
+                var outputPath = output ?? artifact.FullName + ".sig.json";
+                var envelope = await ArtifactSigner.SignKeylessAsync(
+                    artifact.FullName, keylessSigner, label);
+
+                await ApplyTimestampIfRequestedAsync(envelope, tsaUrl);
+
+                var json = ArtifactSigner.Serialize(envelope);
+                File.WriteAllText(outputPath, json);
+
+                Console.WriteLine($"Signed: {artifact.Name}");
+                Console.WriteLine($"Algorithm: {keylessSigner.Signer.Algorithm.ToCanonicalName()}");
+                Console.WriteLine($"Mode: keyless ({providerResult.Value.ProviderName})");
+                Console.WriteLine($"Identity: {keylessSigner.OidcIdentity} (from {keylessSigner.OidcIssuer})");
+                if (envelope.Subject.Metadata?.TryGetValue("sbom.format", out var keylessSbomFormat) == true)
+                    Console.WriteLine($"Format: {keylessSbomFormat} ({envelope.Subject.MediaType})");
+                Console.WriteLine($"Signature: {outputPath}");
                 return;
             }
 

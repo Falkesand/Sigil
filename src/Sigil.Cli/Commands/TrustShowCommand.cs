@@ -71,6 +71,19 @@ public static class TrustShowCommand
                 }
             }
 
+            if (bundle.Identities.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"Identities ({bundle.Identities.Count}):");
+                foreach (var identity in bundle.Identities)
+                {
+                    var name = identity.DisplayName is not null ? $" ({identity.DisplayName})" : "";
+                    Console.WriteLine($"  {identity.Issuer} -> {identity.SubjectPattern}{name}");
+                    if (identity.NotAfter is not null)
+                        Console.WriteLine($"    Expires: {identity.NotAfter}");
+                }
+            }
+
             if (bundle.Revocations.Count > 0)
             {
                 Console.WriteLine();
