@@ -106,27 +106,24 @@ public class GitSignVaultArgTests : IDisposable
         var encryptedPem = signer.ExportEncryptedPrivateKeyPemBytes(passphrase);
         File.WriteAllBytes(pemPath, encryptedPem);
 
-        var originalEnv = Environment.GetEnvironmentVariable("SIGIL_PASSPHRASE");
-        try
-        {
-            Environment.SetEnvironmentVariable("SIGIL_PASSPHRASE", passphrase);
+        var exitCode = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = passphrase },
+            async () =>
+            {
+                var stdin = new StringReader("commit content for env var test");
+                var stdout = new StringWriter();
+                var stderr = new StringWriter();
 
-            var stdin = new StringReader("commit content for env var test");
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
+                // No --passphrase arg — should pick up SIGIL_PASSPHRASE env var
+                var code = await GitSignProgram.RunAsync(
+                    ["git-sign", "--key", pemPath],
+                    stdin, stdout, stderr);
 
-            // No --passphrase arg — should pick up SIGIL_PASSPHRASE env var
-            var exitCode = await GitSignProgram.RunAsync(
-                ["git-sign", "--key", pemPath],
-                stdin, stdout, stderr);
+                Assert.Contains("-----BEGIN SIGNED MESSAGE-----", stdout.ToString());
+                return code;
+            });
 
-            Assert.Equal(0, exitCode);
-            Assert.Contains("-----BEGIN SIGNED MESSAGE-----", stdout.ToString());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("SIGIL_PASSPHRASE", originalEnv);
-        }
+        Assert.Equal(0, exitCode);
     }
 
     [Fact]
@@ -141,27 +138,23 @@ public class GitSignVaultArgTests : IDisposable
         var encryptedPem = signer.ExportEncryptedPrivateKeyPemBytes(correctPassphrase);
         File.WriteAllBytes(pemPath, encryptedPem);
 
-        var originalEnv = Environment.GetEnvironmentVariable("SIGIL_PASSPHRASE");
-        try
-        {
-            // Set wrong passphrase in env, correct one as arg
-            Environment.SetEnvironmentVariable("SIGIL_PASSPHRASE", wrongPassphrase);
+        var exitCode = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = wrongPassphrase },
+            async () =>
+            {
+                var stdin = new StringReader("commit content for override test");
+                var stdout = new StringWriter();
+                var stderr = new StringWriter();
 
-            var stdin = new StringReader("commit content for override test");
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
+                var code = await GitSignProgram.RunAsync(
+                    ["git-sign", "--key", pemPath, "--passphrase", correctPassphrase],
+                    stdin, stdout, stderr);
 
-            var exitCode = await GitSignProgram.RunAsync(
-                ["git-sign", "--key", pemPath, "--passphrase", correctPassphrase],
-                stdin, stdout, stderr);
+                Assert.Contains("-----BEGIN SIGNED MESSAGE-----", stdout.ToString());
+                return code;
+            });
 
-            Assert.Equal(0, exitCode);
-            Assert.Contains("-----BEGIN SIGNED MESSAGE-----", stdout.ToString());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("SIGIL_PASSPHRASE", originalEnv);
-        }
+        Assert.Equal(0, exitCode);
     }
 
     [Fact]

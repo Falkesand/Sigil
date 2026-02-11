@@ -14,6 +14,7 @@ public static class TrustSignCommand
         var keyOption = new Option<string?>("--key") { Description = "Path to the authority's private key PEM" };
         var outputOption = new Option<string?>("-o") { Description = "Output path for signed bundle" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the key is encrypted" };
+        var passphraseFileOption = new Option<string?>("--passphrase-file") { Description = "Path to file containing the passphrase" };
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Algorithm hint for encrypted PEM detection (ecdsa-p256, ecdsa-p384, ecdsa-p521, rsa-pss-sha256, ml-dsa-65)" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider: hashicorp, azure, aws, gcp" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Vault key reference (format depends on provider)" };
@@ -25,6 +26,7 @@ public static class TrustSignCommand
         cmd.Add(keyOption);
         cmd.Add(outputOption);
         cmd.Add(passphraseOption);
+        cmd.Add(passphraseFileOption);
         cmd.Add(algorithmOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
@@ -37,6 +39,7 @@ public static class TrustSignCommand
             var keyPath = parseResult.GetValue(keyOption);
             var output = parseResult.GetValue(outputOption);
             var passphrase = parseResult.GetValue(passphraseOption);
+            var passphraseFile = parseResult.GetValue(passphraseFileOption);
             var algorithmName = parseResult.GetValue(algorithmOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
@@ -192,7 +195,8 @@ public static class TrustSignCommand
             }
 
             // Local PEM signing path
-            var loadResult = KeyLoader.Load(keyPath!, passphrase, algorithmName);
+            var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile);
+            var loadResult = KeyLoader.Load(keyPath!, resolvedPassphrase, algorithmName);
             if (!loadResult.IsSuccess)
             {
                 Console.Error.WriteLine(loadResult.ErrorMessage);

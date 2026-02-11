@@ -134,4 +134,82 @@ public class GitSignProgramSignTests : IDisposable
         Assert.Equal(0, exitCode);
         Assert.Contains("-----BEGIN SIGNED MESSAGE-----", stdout.ToString());
     }
+
+    [Fact]
+    public async Task Sign_PassphraseFile_Works()
+    {
+        var keyPath = GenerateEncryptedKeyFile("pf-pass");
+        var passFile = Path.Combine(_tempDir, "pass.txt");
+        File.WriteAllText(passFile, "pf-pass\n");
+
+        var stdin = new StringReader("commit content");
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await GitSignProgram.RunAsync(
+            ["git-sign", "--key", keyPath, "--passphrase-file", passFile],
+            stdin, stdout, stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("-----BEGIN SIGNED MESSAGE-----", stdout.ToString());
+    }
+
+    [Fact]
+    public async Task Sign_EnvVarFile_Works()
+    {
+        var keyPath = GenerateEncryptedKeyFile("evf-pass");
+        var passFile = Path.Combine(_tempDir, "envf-pass.txt");
+        File.WriteAllText(passFile, "evf-pass");
+
+        var exitCode = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE_FILE"] = passFile },
+            async () =>
+            {
+                var stdin = new StringReader("commit content");
+                var stdout = new StringWriter();
+                var stderr = new StringWriter();
+
+                var code = await GitSignProgram.RunAsync(
+                    ["git-sign", "--key", keyPath],
+                    stdin, stdout, stderr);
+
+                Assert.Contains("-----BEGIN SIGNED MESSAGE-----", stdout.ToString());
+                return code;
+            });
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task Sign_SigilPassphraseEnvVar_StillWorks()
+    {
+        var keyPath = GenerateEncryptedKeyFile("env-pass");
+
+        var exitCode = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = "env-pass" },
+            async () =>
+            {
+                var stdin = new StringReader("commit content");
+                var stdout = new StringWriter();
+                var stderr = new StringWriter();
+
+                var code = await GitSignProgram.RunAsync(
+                    ["git-sign", "--key", keyPath],
+                    stdin, stdout, stderr);
+
+                Assert.Contains("-----BEGIN SIGNED MESSAGE-----", stdout.ToString());
+                return code;
+            });
+
+        Assert.Equal(0, exitCode);
+    }
+
+    private string GenerateEncryptedKeyFile(string passphrase)
+    {
+        using var signer = SignerFactory.Generate(SigningAlgorithm.ECDsaP256);
+        var pemPath = Path.Combine(_tempDir, $"enc-{Guid.NewGuid():N}.pem");
+        var pemBytes = signer.ExportEncryptedPrivateKeyPemBytes(passphrase.ToCharArray());
+        File.WriteAllBytes(pemPath, pemBytes);
+        return pemPath;
+    }
 }

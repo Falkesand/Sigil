@@ -13,17 +13,21 @@ public static class GenerateCommand
     {
         var outputOption = new Option<string?>("-o") { Description = "Output file prefix (writes <prefix>.pem and <prefix>.pub.pem)" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase to encrypt the private key" };
+        var passphraseFileOption = new Option<string?>("--passphrase-file") { Description = "Path to file containing the encryption passphrase" };
         var algorithmOption = new Option<string?>("--algorithm") { Description = "Signing algorithm (ecdsa-p256, ecdsa-p384, ecdsa-p521, rsa-pss-sha256, ml-dsa-65)" };
 
         var cmd = new Command("generate", "Generate a new signing key pair");
         cmd.Add(outputOption);
         cmd.Add(passphraseOption);
+        cmd.Add(passphraseFileOption);
         cmd.Add(algorithmOption);
 
         cmd.SetAction(parseResult =>
         {
             var outputPrefix = parseResult.GetValue(outputOption);
             var passphrase = parseResult.GetValue(passphraseOption);
+            var passphraseFile = parseResult.GetValue(passphraseFileOption);
+            passphrase = PassphraseResolver.Resolve(passphrase, passphraseFile, allowInteractivePrompt: false);
             var algorithmName = parseResult.GetValue(algorithmOption) ?? "ecdsa-p256";
 
             SigningAlgorithm algorithm;

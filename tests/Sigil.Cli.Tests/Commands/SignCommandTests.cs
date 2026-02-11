@@ -143,4 +143,78 @@ public class SignCommandTests : IDisposable
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("All signatures VERIFIED", result.StdOut);
     }
+
+    [Fact]
+    public async Task Sign_PassphraseFile_ReadsFromFile()
+    {
+        var prefix = Path.Combine(_tempDir, "pf-key");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix, "--passphrase", "file-pass");
+
+        var passFile = Path.Combine(_tempDir, "pass.txt");
+        File.WriteAllText(passFile, "file-pass\n");
+
+        var sigPath = Path.Combine(_tempDir, "pf.sig.json");
+        var result = await CommandTestHelper.InvokeAsync(
+            "sign", _artifactPath,
+            "--key", prefix + ".pem",
+            "--passphrase-file", passFile,
+            "--output", sigPath);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Signed:", result.StdOut);
+    }
+
+    [Fact]
+    public async Task Sign_EnvVar_ReadsPassphrase()
+    {
+        var prefix = Path.Combine(_tempDir, "env-key");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix, "--passphrase", "env-pass");
+
+        var sigPath = Path.Combine(_tempDir, "env.sig.json");
+        var result = await CommandTestHelper.InvokeWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = "env-pass" },
+            "sign", _artifactPath,
+            "--key", prefix + ".pem",
+            "--output", sigPath);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Signed:", result.StdOut);
+    }
+
+    [Fact]
+    public async Task Sign_EnvVarFile_ReadsPassphrase()
+    {
+        var prefix = Path.Combine(_tempDir, "envf-key");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix, "--passphrase", "envf-pass");
+
+        var passFile = Path.Combine(_tempDir, "envf-pass.txt");
+        File.WriteAllText(passFile, "envf-pass\r\n");
+
+        var sigPath = Path.Combine(_tempDir, "envf.sig.json");
+        var result = await CommandTestHelper.InvokeWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE_FILE"] = passFile },
+            "sign", _artifactPath,
+            "--key", prefix + ".pem",
+            "--output", sigPath);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Signed:", result.StdOut);
+    }
+
+    [Fact]
+    public async Task Sign_ExistingPassphrase_StillWorks()
+    {
+        var prefix = Path.Combine(_tempDir, "bp-key");
+        await CommandTestHelper.InvokeAsync("generate", "-o", prefix, "--passphrase", "back-compat");
+
+        var sigPath = Path.Combine(_tempDir, "bp.sig.json");
+        var result = await CommandTestHelper.InvokeAsync(
+            "sign", _artifactPath,
+            "--key", prefix + ".pem",
+            "--passphrase", "back-compat",
+            "--output", sigPath);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Signed:", result.StdOut);
+    }
 }

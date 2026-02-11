@@ -154,9 +154,10 @@ public static class GitSignProgram
             }
             else
             {
-                // PEM/PFX path — resolve passphrase from arg or SIGIL_PASSPHRASE env var
-                var passphrase = parsed.Passphrase
-                    ?? Environment.GetEnvironmentVariable("SIGIL_PASSPHRASE");
+                // PEM/PFX path — resolve passphrase via centralized resolver
+                var passphrase = PassphraseResolver.Resolve(
+                    parsed.Passphrase, parsed.PassphraseFile,
+                    allowInteractivePrompt: false);
 
                 var loadResult = KeyLoader.Load(parsed.KeyPath!, passphrase, null);
                 if (!loadResult.IsSuccess)
@@ -321,6 +322,7 @@ public static class GitSignProgram
     {
         string? keyPath = null;
         string? passphrase = null;
+        string? passphraseFile = null;
         string? verifyFile = null;
         string? vaultName = null;
         string? vaultKey = null;
@@ -347,6 +349,14 @@ public static class GitSignProgram
             else if (string.Equals(arg, "--passphrase", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
                 passphrase = args[++i];
+            }
+            else if (arg.StartsWith("--passphrase-file=", StringComparison.OrdinalIgnoreCase))
+            {
+                passphraseFile = arg["--passphrase-file=".Length..];
+            }
+            else if (string.Equals(arg, "--passphrase-file", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                passphraseFile = args[++i];
             }
             else if (arg.StartsWith("--vault=", StringComparison.OrdinalIgnoreCase))
             {
@@ -392,7 +402,7 @@ public static class GitSignProgram
             // Ignore GPG-compat args: -bsau, -b, -s, -a, -u, and their values
         }
 
-        return new ParsedArgs(keyPath, passphrase, verifyFile, statusFd, vaultName, vaultKey, certStoreThumbprint, storeLocation);
+        return new ParsedArgs(keyPath, passphrase, passphraseFile, verifyFile, statusFd, vaultName, vaultKey, certStoreThumbprint, storeLocation);
     }
 
     /// <summary>
@@ -423,6 +433,7 @@ public static class GitSignProgram
     private sealed record ParsedArgs(
         string? KeyPath,
         string? Passphrase,
+        string? PassphraseFile,
         string? VerifyFile,
         int StatusFd,
         string? VaultName,

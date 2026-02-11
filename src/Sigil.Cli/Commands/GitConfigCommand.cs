@@ -13,6 +13,7 @@ public static class GitConfigCommand
         var keyOption = new Option<string?>("--key") { Description = "Path to a private key PEM file" };
         var globalOption = new Option<bool>("--global") { Description = "Set git config globally (also enables commit.gpgsign)" };
         var passphraseOption = new Option<string?>("--passphrase") { Description = "Passphrase if the signing key is encrypted" };
+        var passphraseFileOption = new Option<string?>("--passphrase-file") { Description = "Path to file containing the passphrase" };
         var vaultOption = new Option<string?>("--vault") { Description = "Vault provider (hashicorp, azure, aws, gcp, pkcs11)" };
         var vaultKeyOption = new Option<string?>("--vault-key") { Description = "Key reference in the vault provider" };
         var certStoreOption = new Option<string?>("--cert-store") { Description = "Certificate thumbprint for Windows Certificate Store" };
@@ -22,6 +23,7 @@ public static class GitConfigCommand
         cmd.Add(keyOption);
         cmd.Add(globalOption);
         cmd.Add(passphraseOption);
+        cmd.Add(passphraseFileOption);
         cmd.Add(vaultOption);
         cmd.Add(vaultKeyOption);
         cmd.Add(certStoreOption);
@@ -32,6 +34,7 @@ public static class GitConfigCommand
             var keyPath = parseResult.GetValue(keyOption);
             var isGlobal = parseResult.GetValue(globalOption);
             var passphrase = parseResult.GetValue(passphraseOption);
+            var passphraseFile = parseResult.GetValue(passphraseFileOption);
             var vaultName = parseResult.GetValue(vaultOption);
             var vaultKey = parseResult.GetValue(vaultKeyOption);
             var certStoreThumbprint = parseResult.GetValue(certStoreOption);
@@ -149,7 +152,8 @@ public static class GitConfigCommand
                 // PEM path
                 var fullKeyPath = Path.GetFullPath(keyPath!);
 
-                var loadResult = KeyLoader.Load(fullKeyPath, passphrase, null);
+                var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile);
+                var loadResult = KeyLoader.Load(fullKeyPath, resolvedPassphrase, null);
                 if (!loadResult.IsSuccess)
                 {
                     Console.Error.WriteLine(loadResult.ErrorMessage);
@@ -162,15 +166,14 @@ public static class GitConfigCommand
                     fingerprint = KeyFingerprint.Compute(signer.PublicKey).Value;
                 }
 
-                // Generate PEM wrapper script
+                // Generate PEM wrapper script — passphrase NOT embedded
                 var sigilPath = FindSigilExecutable();
-                wrapperPath = GenerateWrapper(sigilPath, fullKeyPath, passphrase);
+                wrapperPath = GenerateWrapper(sigilPath, fullKeyPath);
 
-                if (passphrase is not null)
+                if (resolvedPassphrase is not null)
                 {
-                    Console.Error.WriteLine("Warning: Passphrase is stored in plaintext in the wrapper script.");
-                    Console.Error.WriteLine($"  File: {wrapperPath}");
-                    Console.Error.WriteLine("  Consider using SIGIL_PASSPHRASE environment variable instead.");
+                    Console.Error.WriteLine("Note: Key requires a passphrase at signing time.");
+                    Console.Error.WriteLine("  Set SIGIL_PASSPHRASE environment variable, or use --passphrase-file.");
                 }
             }
 
@@ -209,7 +212,7 @@ public static class GitConfigCommand
         return "sigil";
     }
 
-    private static string GenerateWrapper(string sigilPath, string keyPath, string? passphrase)
+    private static string GenerateWrapper(string sigilPath, string keyPath)
     {
         var sigilDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".sigil");
@@ -218,20 +221,14 @@ public static class GitConfigCommand
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             var wrapperPath = Path.Combine(sigilDir, "git-sign.bat");
-            var passphraseArg = passphrase is not null
-                ? $" --passphrase \"{EscapeBatchPassphrase(passphrase)}\""
-                : "";
-            var content = $"@\"{sigilPath}\" git-sign --key \"{keyPath}\"{passphraseArg} %*\r\n";
+            var content = $"@\"{sigilPath}\" git-sign --key \"{keyPath}\" %*\r\n";
             File.WriteAllText(wrapperPath, content);
             return wrapperPath;
         }
         else
         {
             var wrapperPath = Path.Combine(sigilDir, "git-sign.sh");
-            var passphraseArg = passphrase is not null
-                ? $" --passphrase '{EscapeShellPassphrase(passphrase)}'"
-                : "";
-            var content = $"#!/bin/sh\nexec \"{sigilPath}\" git-sign --key \"{keyPath}\"{passphraseArg} \"$@\"\n";
+            var content = $"#!/bin/sh\nexec \"{sigilPath}\" git-sign --key \"{keyPath}\" \"$@\"\n";
             File.WriteAllText(wrapperPath, content);
 
             MakeExecutable(wrapperPath);

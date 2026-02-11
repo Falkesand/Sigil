@@ -7,15 +7,18 @@ var builder = WebApplication.CreateSlimBuilder(args);
 var dbPath = GetArg(args, "--db");
 var dbProvider = GetArg(args, "--db-provider") ?? "sqlite";
 var connectionString = GetArg(args, "--connection-string");
-var apiKey = GetArg(args, "--api-key");
+var apiKey = GetArg(args, "--api-key")
+    ?? Environment.GetEnvironmentVariable("SIGIL_API_KEY");
 var keyPath = GetArg(args, "--key");
 var keyPfxPath = GetArg(args, "--key-pfx");
-var keyPassword = GetArg(args, "--key-password");
+var keyPassword = GetArg(args, "--key-password")
+    ?? Environment.GetEnvironmentVariable("SIGIL_KEY_PASSWORD");
 var useDev = args.Contains("--dev-cert");
 var certPath = GetArg(args, "--cert");
 var certKeyPath = GetArg(args, "--cert-key");
 var certPfxPath = GetArg(args, "--cert-pfx");
-var certPassword = GetArg(args, "--cert-password");
+var certPassword = GetArg(args, "--cert-password")
+    ?? Environment.GetEnvironmentVariable("SIGIL_CERT_PASSWORD");
 var mtlsCaPath = GetArg(args, "--mtls-ca");
 var listenUrl = GetArg(args, "--listen") ?? "https://localhost:5001";
 
@@ -34,14 +37,24 @@ if (certPath is not null && certPfxPath is not null)
 
 if (keyPassword is not null && keyPfxPath is null)
 {
-    Console.Error.WriteLine("Error: --key-password requires --key-pfx.");
-    return 1;
+    if (GetArg(args, "--key-password") is not null)
+    {
+        Console.Error.WriteLine("Error: --key-password requires --key-pfx.");
+        return 1;
+    }
+
+    keyPassword = null; // env var without --key-pfx — silently ignore
 }
 
 if (certPassword is not null && certPfxPath is null)
 {
-    Console.Error.WriteLine("Error: --cert-password requires --cert-pfx.");
-    return 1;
+    if (GetArg(args, "--cert-password") is not null)
+    {
+        Console.Error.WriteLine("Error: --cert-password requires --cert-pfx.");
+        return 1;
+    }
+
+    certPassword = null; // env var without --cert-pfx — silently ignore
 }
 
 // Validate TLS configuration
@@ -144,12 +157,17 @@ builder.Services.AddSingleton(logService);
 
 var app = builder.Build();
 
+// Passwords are no longer needed — ConfigureKestrel lambda has executed during Build()
+keyPassword = null;
+certPassword = null;
+
 // HTTPS redirection + HSTS as defense-in-depth
 app.UseHsts();
 app.UseHttpsRedirection();
 
-// API key middleware
+// API key middleware — middleware constructor hashes the key immediately
 app.UseMiddleware<ApiKeyMiddleware>(apiKey);
+apiKey = null; // Release reference — middleware only retains the SHA256 hash
 
 // Map all API endpoints
 EndpointMapper.Map(app, logService, store, signer);
