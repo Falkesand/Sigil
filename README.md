@@ -130,6 +130,11 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Windows Certificate Store](#windows-certificate-store)
   - [Certificate store with git signing](#certificate-store-with-git-signing)
   - [LogServer with PFX keys](#logserver-with-pfx-keys)
+- [Passphrase and credential management](#passphrase-and-credential-management)
+  - [Resolution chain](#resolution-chain)
+  - [Passphrase files](#passphrase-files)
+  - [Windows Credential Manager](#windows-credential-manager)
+  - [Security recommendations](#security-recommendations)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -2457,27 +2462,23 @@ This is ideal for enterprise environments where keys are managed via Active Dire
 
 ### Sign with an encrypted PEM key
 
-If your PEM key is passphrase-protected, you can provide the passphrase at config time:
+If your PEM key is passphrase-protected, configure git as usual:
 
 ```
-sigil git config --key mykey.pem --passphrase "my secret"
+sigil git config --key mykey.pem --global
 ```
 
-This embeds the passphrase in the wrapper script. A warning is displayed:
+Sigil resolves the passphrase at signing time using the [resolution chain](#resolution-chain). The passphrase is never embedded in the wrapper script.
+
+**On Windows (recommended)**: Store the passphrase in Windows Credential Manager for seamless signing:
 
 ```
-Warning: Passphrase is stored in plaintext in the wrapper script.
-  File: /home/user/.sigil/git-sign.sh
-  Consider using SIGIL_PASSPHRASE environment variable instead.
+sigil credential store --key mykey.pem
 ```
 
-**Recommended**: Use the `SIGIL_PASSPHRASE` environment variable instead. This avoids storing the passphrase on disk:
+After storing, git commits are signed without any passphrase prompts or environment variables.
 
-```
-sigil git config --key mykey.pem
-```
-
-Then set the environment variable in your shell profile:
+**On Linux/macOS**: Set the passphrase in your shell profile:
 
 ```bash
 # ~/.bashrc or ~/.zshrc
@@ -2489,12 +2490,13 @@ export SIGIL_PASSPHRASE="my secret"
 $env:SIGIL_PASSPHRASE = "my secret"
 ```
 
-```batch
-:: Windows (cmd) — set in current session
-set SIGIL_PASSPHRASE=my secret
+**In CI/CD**: Use `--passphrase-file` or `SIGIL_PASSPHRASE_FILE` with a mounted secret:
+
+```bash
+export SIGIL_PASSPHRASE_FILE=/run/secrets/signing-passphrase
 ```
 
-The `--passphrase` CLI argument takes precedence over the environment variable if both are set.
+See [Passphrase and credential management](#passphrase-and-credential-management) for the full resolution chain and security recommendations.
 
 ### Sign commits and tags
 
@@ -3242,24 +3244,124 @@ This is useful in Windows environments where TLS certificates and signing keys a
 
 `--key` and `--key-pfx` are mutually exclusive. `--cert`/`--cert-key` and `--cert-pfx` are mutually exclusive.
 
+## Passphrase and credential management
+
+When a PEM key is encrypted with a passphrase, Sigil resolves the passphrase from multiple sources in priority order. This applies to all signing commands (`sign`, `attest`, `sign-manifest`, `sign-image`, `trust sign`, `git config`, and `git-sign`).
+
+### Resolution chain
+
+Sigil checks these sources in order, using the first one that returns a value:
+
+| Priority | Source | How to set |
+|----------|--------|------------|
+| 1 | `--passphrase` CLI argument | `sigil sign file.txt --key key.pem --passphrase "secret"` |
+| 2 | `--passphrase-file` CLI argument | `sigil sign file.txt --key key.pem --passphrase-file /path/to/pass.txt` |
+| 3 | `SIGIL_PASSPHRASE` environment variable | `export SIGIL_PASSPHRASE="secret"` |
+| 4 | `SIGIL_PASSPHRASE_FILE` environment variable | `export SIGIL_PASSPHRASE_FILE=/path/to/pass.txt` |
+| 5 | Windows Credential Manager | `sigil credential store --key key.pem` |
+| 6 | Interactive console prompt | Prompted at runtime (if TTY is available) |
+
+If no source provides a passphrase, Sigil assumes the key is unencrypted.
+
+### Passphrase files
+
+Passphrase files should contain only the passphrase, optionally followed by a trailing newline. UTF-8 BOM prefixes are automatically skipped. Trailing `\r\n` and `\n` are trimmed.
+
+```
+sigil sign artifact.bin --key key.pem --passphrase-file /run/secrets/passphrase
+```
+
+This is the recommended approach for CI/CD pipelines — mount the secret as a file and reference it with `--passphrase-file` or `SIGIL_PASSPHRASE_FILE`.
+
+### Windows Credential Manager
+
+On Windows, Sigil can store and retrieve passphrases from Windows Credential Manager (backed by DPAPI, protected by your Windows login credentials). This avoids environment variables, plaintext files, and repeated prompts.
+
+#### Store a passphrase
+
+```
+sigil credential store --key mykey.pem
+```
+
+You'll be prompted to enter the passphrase. Sigil validates it by decrypting the key before storing. If the passphrase is wrong, nothing is stored.
+
+```
+Enter passphrase for key: ********
+Passphrase stored for: C:\Users\you\keys\mykey.pem
+```
+
+Once stored, any signing command using `--key mykey.pem` will automatically retrieve the passphrase — no `--passphrase` or environment variable needed:
+
+```
+sigil sign artifact.bin --key mykey.pem
+```
+
+#### List stored passphrases
+
+```
+sigil credential list
+```
+
+Output shows key file paths only — passphrase values are never displayed:
+
+```
+C:\Users\you\keys\mykey.pem
+C:\Users\you\keys\release-key.pem
+```
+
+#### Remove a stored passphrase
+
+```
+sigil credential remove --key mykey.pem
+```
+
+```
+Passphrase removed for: C:\Users\you\keys\mykey.pem
+```
+
+After removal, signing with that key will require a passphrase from another source (CLI argument, file, environment variable, or interactive prompt).
+
+#### How credential storage works
+
+- Credentials are stored via the Windows `CredWrite` API with `CRED_TYPE_GENERIC`
+- Encryption is handled by DPAPI — passphrases are protected by your Windows login credentials
+- Target names use the format `sigil:passphrase:<absolute-key-path>`, so each key file has its own credential entry
+- You can view stored credentials in Control Panel > Credential Manager > Windows Credentials (look for entries starting with `sigil:passphrase:`)
+- Credential storage is available on Windows only. On other platforms, `sigil credential` commands report that credential storage is not supported
+
+### Security recommendations
+
+| Scenario | Recommended source |
+|----------|-------------------|
+| Interactive development (Windows) | Windows Credential Manager (`sigil credential store`) |
+| Interactive development (Linux/macOS) | Interactive prompt (automatic) |
+| CI/CD pipelines | `--passphrase-file` with a mounted secret |
+| Automated scripts | `SIGIL_PASSPHRASE` or `SIGIL_PASSPHRASE_FILE` environment variable |
+| Git commit signing | Windows Credential Manager or `SIGIL_PASSPHRASE` in shell profile |
+
+Avoid `--passphrase` on the CLI when possible — the value may appear in shell history and process listings.
+
 ## CLI reference
 
 ```
 sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
-sigil sign <file> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
+sigil sign <file> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil attest <file> --predicate <json> --type <type> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>]
+sigil attest <file> --predicate <json> --type <type> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>]
 sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil timestamp <envelope> --tsa <tsa-url> [--index <n>]
 sigil trust create --name <name> [-o path] [--description "text"]
 sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
 sigil trust remove <bundle> --fingerprint <fp>
 sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
-sigil trust sign <bundle> --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [-o path] [--passphrase "pass"]
+sigil trust sign <bundle> --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [-o path] [--passphrase "pass"] [--passphrase-file path]
 sigil trust revoke <bundle> --fingerprint <fp> [--reason "text"]
 sigil trust identity-add <bundle> --issuer <url> --subject <pattern> [--name "display name"] [--not-after date]
 sigil trust identity-remove <bundle> --issuer <url> --subject <pattern>
 sigil trust show <bundle>
+sigil credential store --key <path>
+sigil credential remove --key <path>
+sigil credential list
 sigil log append <envelope> [--log <path>] [--signature-index <n>]
 sigil log verify [--log <path>] [--checkpoint <path>]
 sigil log search [--log <path>] [--key <fp>] [--artifact <name>] [--digest <sha256>]
@@ -3268,11 +3370,11 @@ sigil log proof [--log <path>] [--index <n>] [--old-size <m>]
 sigil discover well-known <domain> [-o path]
 sigil discover dns <domain> [-o path]
 sigil discover git <url> [-o path]
-sigil sign-image <image> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--passphrase "pass"] [--algorithm name] [--label "name"] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
+sigil sign-image <image> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--label "name"] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify-image <image> [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil sign-manifest <path> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
+sigil sign-manifest <path> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify-manifest <manifest> [--base-path path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [--global] [--passphrase "pass"]
+sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [--global] [--passphrase "pass"] [--passphrase-file path]
 ```
 
 **generate**: Create a key pair for persistent signing.
@@ -3292,6 +3394,8 @@ sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <
 - `--keyless` requires `--timestamp` (ephemeral keys need timestamps for trust evaluation)
 - `--oidc-token` provides a manual OIDC JWT (requires `--keyless`); without it, the token is acquired from GitHub Actions or GitLab CI
 - `--algorithm` only applies to ephemeral and keyless modes (default: `ecdsa-p256`)
+- `--passphrase-file` reads the passphrase from a file (preferred over `--passphrase` for CI/CD)
+- Passphrase resolution: `--passphrase` > `--passphrase-file` > `SIGIL_PASSPHRASE` > `SIGIL_PASSPHRASE_FILE` > Windows Credential Manager > interactive prompt. See [Passphrase and credential management](#passphrase-and-credential-management)
 - `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (non-fatal on failure)
 - `--log-url` submits the signature to a remote transparency log after signing (non-fatal on failure). Use `rekor` for Sigstore Rekor, or `rekor:https://...` for a self-hosted Rekor instance
 - `--log-api-key` provides the API key for Sigil LogServer write operations (not needed for Rekor)
@@ -3349,6 +3453,19 @@ sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <
 
 **trust show**: Display the contents of a trust bundle (keys, endorsements, identities, revocations, signature status).
 
+**credential store**: Store an encrypted key's passphrase in Windows Credential Manager.
+- `--key` is required — the path to the private key file
+- Prompts for the passphrase interactively (requires a terminal)
+- Validates the passphrase by decrypting the key before storing
+- Windows only — returns an error on other platforms
+
+**credential remove**: Remove a stored passphrase from Windows Credential Manager.
+- `--key` is required — the path to the private key file
+
+**credential list**: List all key paths with stored passphrases.
+- Shows key file paths only — passphrase values are never displayed
+- Windows only — returns an error on other platforms
+
 **log append**: Append a signing event to the transparency log.
 - `<envelope>` is the path to a `.sig.json` file
 - `--log` overrides the default log path (`.sigil.log.jsonl`)
@@ -3387,7 +3504,8 @@ sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <
 - `--global` sets git config globally and enables `commit.gpgsign = true`
 - Without `--global`, config is local (per-repository) and commits must be signed with `-S`
 - Generates a wrapper script in `~/.sigil/` and sets `gpg.format`, `gpg.x509.program`, and `user.signingkey`
-- `--passphrase` embeds the passphrase in the wrapper script (consider `SIGIL_PASSPHRASE` env var instead)
+- Passphrases are NOT embedded in wrapper scripts. If the key is encrypted, the passphrase is resolved at signing time via the [resolution chain](#resolution-chain)
+- On Windows with an encrypted key, a hint is shown to use `sigil credential store --key <path>` for seamless signing
 
 **sign-image**: Sign an OCI container image in a registry.
 - `<image>` is a full image reference (e.g., `ghcr.io/myorg/myapp:v1.0` or `registry/repo@sha256:...`)
