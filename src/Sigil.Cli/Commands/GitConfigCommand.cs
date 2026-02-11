@@ -152,7 +152,7 @@ public static class GitConfigCommand
                 // PEM path
                 var fullKeyPath = Path.GetFullPath(keyPath!);
 
-                var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile);
+                var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile, keyPath: fullKeyPath);
                 var loadResult = KeyLoader.Load(fullKeyPath, resolvedPassphrase, null);
                 if (!loadResult.IsSuccess)
                 {
@@ -174,6 +174,8 @@ public static class GitConfigCommand
                 {
                     Console.Error.WriteLine("Note: Key requires a passphrase at signing time.");
                     Console.Error.WriteLine("  Set SIGIL_PASSPHRASE environment variable, or use --passphrase-file.");
+                    if (OperatingSystem.IsWindows())
+                        Console.Error.WriteLine($"  Or run: sigil credential store --key \"{fullKeyPath}\"");
                 }
             }
 

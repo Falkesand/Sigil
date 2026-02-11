@@ -13,7 +13,9 @@ public static class PassphraseResolver
         string? cliPassphraseFile,
         IConsolePrompter? prompter = null,
         bool allowInteractivePrompt = true,
-        string promptMessage = "Enter passphrase: ")
+        string promptMessage = "Enter passphrase: ",
+        string? keyPath = null,
+        ICredentialStore? credentialStore = null)
     {
         // 1. --passphrase arg
         if (cliPassphrase is not null)
@@ -33,7 +35,20 @@ public static class PassphraseResolver
         if (!string.IsNullOrEmpty(envFilePath))
             return ReadPassphraseFile(envFilePath);
 
-        // 5. Interactive prompt (if allowed and TTY)
+        // 5. Windows Credential Manager (if keyPath provided)
+        if (keyPath is not null)
+        {
+            credentialStore ??= CredentialStoreFactory.TryCreate();
+            if (credentialStore is not null)
+            {
+                var targetName = BuildTargetName(keyPath);
+                var credResult = credentialStore.Retrieve(targetName);
+                if (credResult.IsSuccess)
+                    return credResult.Value;
+            }
+        }
+
+        // 6. Interactive prompt (if allowed and TTY)
         if (allowInteractivePrompt)
         {
             prompter ??= ConsolePrompter.Instance;
@@ -42,6 +57,11 @@ public static class PassphraseResolver
         }
 
         return null;
+    }
+
+    internal static string BuildTargetName(string keyPath)
+    {
+        return $"sigil:passphrase:{Path.GetFullPath(keyPath)}";
     }
 
     private static string ReadPassphraseFile(string filePath)

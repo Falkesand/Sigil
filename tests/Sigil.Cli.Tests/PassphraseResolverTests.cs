@@ -208,6 +208,133 @@ public class PassphraseResolverTests : IDisposable
         Assert.Null(result);
     }
 
+    // --- Credential Store tests ---
+
+    [Fact]
+    public async Task Resolve_CredentialStore_ReturnsStoredPassphrase()
+    {
+        var fakeStore = new FakeCredentialStore();
+        var keyPath = Path.Combine(_tempDir, "test.pem");
+        var targetName = PassphraseResolver.BuildTargetName(keyPath);
+        fakeStore.StorePassphrase(targetName, "cred-secret");
+
+        var result = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = null, ["SIGIL_PASSPHRASE_FILE"] = null },
+            () => Task.FromResult(
+                PassphraseResolver.Resolve(null, null, new FakePrompter(false, null),
+                    keyPath: keyPath, credentialStore: fakeStore)));
+
+        Assert.Equal("cred-secret", result);
+    }
+
+    [Fact]
+    public async Task Resolve_CredentialStore_SkippedWhenKeyPathNull()
+    {
+        var fakeStore = new FakeCredentialStore();
+        fakeStore.StorePassphrase("sigil:passphrase:anything", "should-not-return");
+
+        var result = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = null, ["SIGIL_PASSPHRASE_FILE"] = null },
+            () => Task.FromResult(
+                PassphraseResolver.Resolve(null, null, new FakePrompter(false, null),
+                    keyPath: null, credentialStore: fakeStore)));
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task Resolve_CredentialStore_NotFoundFallsThrough()
+    {
+        var fakeStore = new FakeCredentialStore(); // empty
+        var keyPath = Path.Combine(_tempDir, "test.pem");
+
+        var result = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = null, ["SIGIL_PASSPHRASE_FILE"] = null },
+            () =>
+            {
+                var prompter = new FakePrompter(isInteractive: true, response: "prompted");
+                return Task.FromResult(
+                    PassphraseResolver.Resolve(null, null, prompter,
+                        keyPath: keyPath, credentialStore: fakeStore));
+            });
+
+        Assert.Equal("prompted", result);
+    }
+
+    [Fact]
+    public void Resolve_Priority_CliOverCredentialStore()
+    {
+        var fakeStore = new FakeCredentialStore();
+        var keyPath = Path.Combine(_tempDir, "test.pem");
+        fakeStore.StorePassphrase(PassphraseResolver.BuildTargetName(keyPath), "cred-secret");
+
+        var result = PassphraseResolver.Resolve("cli-secret", null, new FakePrompter(false, null),
+            keyPath: keyPath, credentialStore: fakeStore);
+
+        Assert.Equal("cli-secret", result);
+    }
+
+    [Fact]
+    public async Task Resolve_Priority_EnvVarOverCredentialStore()
+    {
+        var fakeStore = new FakeCredentialStore();
+        var keyPath = Path.Combine(_tempDir, "test.pem");
+        fakeStore.StorePassphrase(PassphraseResolver.BuildTargetName(keyPath), "cred-secret");
+
+        var result = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = "env-secret", ["SIGIL_PASSPHRASE_FILE"] = null },
+            () => Task.FromResult(
+                PassphraseResolver.Resolve(null, null, new FakePrompter(false, null),
+                    keyPath: keyPath, credentialStore: fakeStore)));
+
+        Assert.Equal("env-secret", result);
+    }
+
+    [Fact]
+    public async Task Resolve_Priority_CredentialStoreOverPrompt()
+    {
+        var fakeStore = new FakeCredentialStore();
+        var keyPath = Path.Combine(_tempDir, "test.pem");
+        fakeStore.StorePassphrase(PassphraseResolver.BuildTargetName(keyPath), "cred-secret");
+
+        var result = await CommandTestHelper.RunWithEnvVarsAsync(
+            new Dictionary<string, string?> { ["SIGIL_PASSPHRASE"] = null, ["SIGIL_PASSPHRASE_FILE"] = null },
+            () =>
+            {
+                var prompter = new FakePrompter(isInteractive: true, response: "prompted");
+                return Task.FromResult(
+                    PassphraseResolver.Resolve(null, null, prompter,
+                        keyPath: keyPath, credentialStore: fakeStore));
+            });
+
+        Assert.Equal("cred-secret", result);
+    }
+
+    [Fact]
+    public void BuildTargetName_NormalizesPath()
+    {
+        var keyPath = Path.Combine(_tempDir, "keys", "..", "test.pem");
+        var expected = Path.Combine(_tempDir, "test.pem");
+
+        var targetName = PassphraseResolver.BuildTargetName(keyPath);
+
+        Assert.Equal($"sigil:passphrase:{expected}", targetName);
+    }
+
+    [Fact]
+    public void Resolve_CliPassphraseFile_OverCredentialStore()
+    {
+        var path = WritePassphraseFile("file-secret");
+        var fakeStore = new FakeCredentialStore();
+        var keyPath = Path.Combine(_tempDir, "test.pem");
+        fakeStore.StorePassphrase(PassphraseResolver.BuildTargetName(keyPath), "cred-secret");
+
+        var result = PassphraseResolver.Resolve(null, path, new FakePrompter(false, null),
+            keyPath: keyPath, credentialStore: fakeStore);
+
+        Assert.Equal("file-secret", result);
+    }
+
     private sealed class FakePrompter : IConsolePrompter
     {
         private readonly string? _response;
@@ -221,5 +348,40 @@ public class PassphraseResolverTests : IDisposable
         public bool IsInteractive { get; }
 
         public string? ReadPassphrase(string prompt) => _response;
+    }
+
+    private sealed class FakeCredentialStore : ICredentialStore
+    {
+        private readonly Dictionary<string, string> _store = new(StringComparer.Ordinal);
+
+        public void StorePassphrase(string targetName, string secret) => _store[targetName] = secret;
+
+        public CredentialStoreResult<string> Retrieve(string targetName)
+        {
+            if (_store.TryGetValue(targetName, out var value))
+                return CredentialStoreResult<string>.Ok(value);
+            return CredentialStoreResult<string>.Fail(
+                CredentialStoreErrorKind.NotFound, $"Not found: {targetName}");
+        }
+
+        public CredentialStoreResult<bool> Store(string targetName, string secret)
+        {
+            _store[targetName] = secret;
+            return CredentialStoreResult<bool>.Ok(true);
+        }
+
+        public CredentialStoreResult<bool> Delete(string targetName)
+        {
+            if (_store.Remove(targetName))
+                return CredentialStoreResult<bool>.Ok(true);
+            return CredentialStoreResult<bool>.Fail(
+                CredentialStoreErrorKind.NotFound, $"Not found: {targetName}");
+        }
+
+        public CredentialStoreResult<IReadOnlyList<string>> List(string prefix)
+        {
+            var matches = _store.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList();
+            return CredentialStoreResult<IReadOnlyList<string>>.Ok(matches);
+        }
     }
 }
