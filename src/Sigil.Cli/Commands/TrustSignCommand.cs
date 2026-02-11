@@ -195,7 +195,7 @@ public static class TrustSignCommand
             }
 
             // Local PEM signing path
-            var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile);
+            var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile, keyPath: keyPath);
             var loadResult = KeyLoader.Load(keyPath!, resolvedPassphrase, algorithmName);
             if (!loadResult.IsSuccess)
             {

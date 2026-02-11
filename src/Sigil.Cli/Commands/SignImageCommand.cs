@@ -171,7 +171,7 @@ public static class SignImageCommand
 
             if (keyPath is not null)
             {
-                var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile);
+                var resolvedPassphrase = PassphraseResolver.Resolve(passphrase, passphraseFile, keyPath: keyPath);
                 var loadResult = KeyLoader.Load(keyPath, resolvedPassphrase, algorithmName);
                 if (!loadResult.IsSuccess)
                 {

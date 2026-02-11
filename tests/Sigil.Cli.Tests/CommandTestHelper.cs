@@ -114,6 +114,7 @@ public static class CommandTestHelper
             rootCommand.Add(VerifyImageCommand.Create());
             rootCommand.Add(SignManifestCommand.Create());
             rootCommand.Add(VerifyManifestCommand.Create());
+            rootCommand.Add(CredentialCommand.Create());
 
             Environment.ExitCode = 0;
             var config = new CommandLineConfiguration(rootCommand);

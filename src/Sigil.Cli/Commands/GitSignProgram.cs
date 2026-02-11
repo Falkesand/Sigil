@@ -157,7 +157,8 @@ public static class GitSignProgram
                 // PEM/PFX path — resolve passphrase via centralized resolver
                 var passphrase = PassphraseResolver.Resolve(
                     parsed.Passphrase, parsed.PassphraseFile,
-                    allowInteractivePrompt: false);
+                    allowInteractivePrompt: false,
+                    keyPath: parsed.KeyPath);
 
                 var loadResult = KeyLoader.Load(parsed.KeyPath!, passphrase, null);
                 if (!loadResult.IsSuccess)
