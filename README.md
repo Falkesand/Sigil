@@ -26,6 +26,8 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Verify a container image](#verify-a-container-image)
   - [Sign a directory of files](#sign-a-directory-of-files)
   - [Verify a manifest](#verify-a-manifest)
+  - [Sign an archive](#sign-an-archive)
+  - [Verify an archive](#verify-an-archive)
 - [Cross-platform notes](#cross-platform-notes)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
@@ -116,6 +118,14 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Manifests with trust bundles](#manifests-with-trust-bundles)
   - [How manifest signing works](#how-manifest-signing-works)
   - [Manifest envelope format](#manifest-envelope-format)
+- [Archive signing](#archive-signing)
+  - [Sign an archive file](#sign-an-archive-file)
+  - [Verify an archive](#verify-an-archive-1)
+  - [Tampered entry detection](#tampered-entry-detection)
+  - [Extra entry detection](#extra-entry-detection)
+  - [NuGet package metadata](#nuget-package-metadata)
+  - [How archive signing works](#how-archive-signing-works)
+  - [Archive envelope format](#archive-envelope-format)
 - [Keyless/OIDC signing](#keylessoidc-signing)
   - [Sign in GitHub Actions](#sign-in-github-actions)
   - [Sign in GitLab CI](#sign-in-gitlab-ci)
@@ -147,6 +157,7 @@ Sigil lets you **sign files** and **verify signatures**. That's it.
 
 - Sign a file — Sigil produces a small `.sig.json` file next to it
 - Sign a directory — Sigil produces a single `.manifest.sig.json` covering all files atomically
+- Sign an archive — Sigil produces an `.archive.sig.json` with per-entry digests for ZIP, tar.gz, and tar files
 - Anyone can verify the file hasn't been tampered with — the public key is embedded in the envelope
 - No key store, no import/export, no hidden state
 
@@ -171,6 +182,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 | Git commit signing | Yes (GPG drop-in) | No | Yes | No |
 | Container signing | Yes (OCI 1.1 referrers) | Yes (Cosign) | No | No |
 | Batch/manifest signing | Yes (atomic multi-file) | No | No | No |
+| Archive signing | Yes (ZIP, tar.gz, tar, NuGet) | No | No | No |
 | Transparency log | Yes (local + remote server + Rekor) | Yes (Rekor) | No | No |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
@@ -612,6 +624,47 @@ All signatures VERIFIED.
 ```
 
 Trust bundles, policies, and discovery all work with manifests — same as file signatures. See [Batch/manifest signing](#batchmanifest-signing) for details.
+
+### Sign an archive
+
+Sign a ZIP, tar.gz, or tar archive with per-entry digest verification:
+
+```
+sigil sign-archive release.zip --key mykey.pem
+```
+
+```
+Archive signed: 12 entries
+Algorithm: ecdsa-p256
+Key: sha256:c017446b...
+Mode: persistent key
+Output: release.zip.archive.sig.json
+```
+
+All signing modes work — ephemeral, persistent, vault, cert store, and PKCS#11. SBOM entries are auto-detected and NuGet `.nupkg` metadata is extracted automatically.
+
+See [Archive signing](#archive-signing) for details.
+
+### Verify an archive
+
+```
+sigil verify-archive release.zip
+```
+
+```
+Archive: release.zip (12 entries)
+  [OK] lib/MyLib.dll
+  [OK] lib/MyLib.pdb
+  [OK] sbom.cdx.json (CycloneDX 1.5)
+  ...
+
+Signatures:
+  [VERIFIED] sha256:c017446b...
+
+All signatures VERIFIED.
+```
+
+Trust bundles, policies, and discovery all work with archives — same as file and manifest signatures. See [Archive signing](#archive-signing) for details.
 
 ## Cross-platform notes
 
@@ -2961,6 +3014,220 @@ The `.manifest.sig.json` envelope:
 
 The `kind` field distinguishes manifest envelopes from single-file envelopes (`"artifact"`). Subjects are ordered deterministically by name. Each signature covers the entire subjects array — there are no per-file signatures.
 
+## Archive signing
+
+Sigil signs archives (ZIP, tar.gz, tar) with per-entry digest verification. A single `.archive.sig.json` file contains SHA-256 and SHA-512 digests for every entry inside the archive, plus one or more cryptographic signatures. Recipients can verify archive integrity and authenticity without extracting the archive first.
+
+Zero new dependencies — reuses existing `ManifestEnvelope` infrastructure with `kind = "archive"`.
+
+Supported formats:
+- **ZIP** (`.zip`) — including `.nupkg` NuGet packages
+- **tar.gz / .tgz** — gzip-compressed tar archives
+- **tar** — uncompressed tar archives
+
+Format is detected by magic bytes with file extension as fallback.
+
+### Sign an archive file
+
+```
+sigil sign-archive release.zip --key mykey.pem
+```
+
+```
+Archive signed: 12 entries
+Algorithm: ecdsa-p256
+Key: sha256:c017446b...
+Mode: persistent key
+Output: release.zip.archive.sig.json
+```
+
+All signing modes work — ephemeral, persistent, vault, cert store, and PKCS#11:
+
+```
+sigil sign-archive release.zip
+sigil sign-archive release.zip --key mykey.pem
+sigil sign-archive release.tar.gz --vault aws --vault-key alias/ci-key
+sigil sign-archive release.zip --cert-store ABC123
+```
+
+Add a label and timestamp:
+
+```
+sigil sign-archive release.zip --key mykey.pem --label "v2.1.0" --timestamp http://timestamp.digicert.com
+```
+
+Specify a custom output path:
+
+```
+sigil sign-archive release.zip --key mykey.pem --output dist/release.sig.json
+```
+
+### Verify an archive
+
+```
+sigil verify-archive release.zip
+```
+
+```
+Archive: release.zip (12 entries)
+  [OK] lib/MyLib.dll
+  [OK] lib/MyLib.pdb
+  [OK] sbom.cdx.json (CycloneDX 1.5)
+  ...
+
+Signatures:
+  [VERIFIED] sha256:c017446b...
+
+All signatures VERIFIED.
+```
+
+Default signature path is `<archive>.archive.sig.json`. Override with `--signature`:
+
+```
+sigil verify-archive release.zip --signature dist/release.sig.json
+```
+
+Trust bundles, policies, and discovery all work with archives:
+
+```
+sigil verify-archive release.zip --trust-bundle trust-signed.json --authority sha256:def456...
+sigil verify-archive release.zip --discover example.com
+sigil verify-archive release.zip --policy policy.json
+```
+
+### Tampered entry detection
+
+If any entry has been modified since signing:
+
+```
+Archive: release.zip (12 entries)
+  [OK] lib/MyLib.dll
+  [FAIL] lib/MyLib.pdb — Digest mismatch.
+  [OK] sbom.cdx.json (CycloneDX 1.5)
+  ...
+
+Signatures:
+  [VERIFIED] sha256:c017446b...
+
+VERIFICATION FAILED.
+```
+
+Digest mismatch is reported per-entry, even when the overall signature is still cryptographically valid (the signature covers the original digests, not the current file contents).
+
+### Extra entry detection
+
+Entries present in the archive but not covered by the envelope are reported as warnings:
+
+```
+Archive: release.zip (13 entries)
+  [OK] lib/MyLib.dll
+  ...
+
+Extra entries (not in envelope):
+  debug.log
+
+Signatures:
+  [VERIFIED] sha256:c017446b...
+
+All signatures VERIFIED.
+WARNING: 1 extra entry not covered by envelope.
+```
+
+Extra entries do not cause verification failure but indicate the archive has been modified since signing.
+
+### NuGet package metadata
+
+When signing `.nupkg` files, Sigil extracts metadata from the embedded `.nuspec`:
+
+```
+sigil sign-archive MyLib.1.0.0.nupkg --key mykey.pem
+```
+
+The envelope's subjects include NuGet-specific metadata:
+
+```json
+{
+  "name": "MyLib.nuspec",
+  "metadata": {
+    "nuget.id": "MyLib",
+    "nuget.version": "1.0.0",
+    "nuget.authors": "Alice"
+  }
+}
+```
+
+### How archive signing works
+
+**Sign flow:**
+
+1. Detect archive format (ZIP, tar.gz, tar) by magic bytes or file extension
+2. Iterate all entries, skipping directories
+3. For each entry: stream content with a 500 MB per-entry size limit (zip bomb protection), compute SHA-256 and SHA-512 digests, auto-detect SBOM format (CycloneDX/SPDX), build a `SubjectDescriptor`
+4. For `.nupkg` archives: extract `.nuspec` metadata (package id, version, authors)
+5. Sort subjects by forward-slash normalized path (`StringComparer.Ordinal`) for deterministic ordering
+6. Build the signing payload: `JCS(subjects-array) + JCS(signed-attributes)` — same as manifest signing
+7. Sign the payload (ephemeral, PEM, PFX, vault, cert store, or PKCS#11)
+8. Optionally apply RFC 3161 timestamp and/or submit to transparency log
+9. Write the archive envelope to `.archive.sig.json`
+
+**Verify flow:**
+
+1. Load the archive envelope from `.archive.sig.json`
+2. Detect archive format and re-read all entries
+3. For each subject in the envelope: find the matching entry in the archive, recompute digests, compare
+4. Report entries in the archive not covered by the envelope (extra entries)
+5. For each signature: rebuild the signing payload from the subjects array and verify against the embedded public key
+6. Optionally evaluate trust bundles, policies, or discovery
+
+**Security:**
+- Path traversal protection: entries with `..` path segments or absolute paths are rejected
+- Zip bomb protection: 500 MB per-entry size limit enforced during streaming
+- Archives within archives are treated as opaque entries (no recursive opening)
+
+### Archive envelope format
+
+The `.archive.sig.json` envelope:
+
+```json
+{
+  "version": "1.0",
+  "kind": "archive",
+  "subjects": [
+    {
+      "digests": {
+        "sha256": "f12c1087...",
+        "sha512": "9a39f53e..."
+      },
+      "name": "lib/MyLib.dll"
+    },
+    {
+      "digests": {
+        "sha256": "b5bed928...",
+        "sha512": "cb529285..."
+      },
+      "name": "sbom.cdx.json",
+      "mediaType": "application/vnd.cyclonedx+json",
+      "metadata": {
+        "sbom.format": "CycloneDX",
+        "sbom.specVersion": "1.5",
+        "sbom.componentCount": "42"
+      }
+    }
+  ],
+  "signatures": [
+    {
+      "keyId": "sha256:c017446b...",
+      "algorithm": "ecdsa-p256",
+      "publicKey": "MFkwEwYH...",
+      "value": "N6Nx/spZ...",
+      "timestamp": "2026-02-11T15:30:00Z"
+    }
+  ]
+}
+```
+
+The `kind` field is `"archive"` (vs `"manifest"` for directory signing or `"artifact"` for single files). Subjects are ordered deterministically by name. Each signature covers the entire subjects array.
+
 ## Keyless/OIDC signing
 
 Keyless signing lets you sign artifacts using your CI identity (GitHub Actions, GitLab CI, etc.) without managing any keys. An ephemeral key pair is generated, bound to your OIDC token, and discarded after signing. The OIDC token is embedded in the signature envelope so verifiers can confirm who signed it.
@@ -3374,6 +3641,8 @@ sigil sign-image <image> [--key <private.pem|file.pfx>] [--vault <provider>] [--
 sigil verify-image <image> [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil sign-manifest <path> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify-manifest <manifest> [--base-path path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
+sigil sign-archive <archive> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
+sigil verify-archive <archive> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [--global] [--passphrase "pass"] [--passphrase-file path]
 ```
 
@@ -3547,6 +3816,29 @@ sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <
 - `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
 - `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
 
+**sign-archive**: Sign an archive file (ZIP, tar.gz, tar) with per-entry digests.
+- `<archive>` is the path to a ZIP, tar.gz, or tar file (format auto-detected by magic bytes)
+- Four signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`), cert store (`--cert-store`)
+- `--key`, `--vault`, and `--cert-store` are mutually exclusive
+- `--output` overrides default output path (`<archive>.archive.sig.json`)
+- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
+- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
+- `--label` attaches a label to the signature
+- `--log-url` submits the signature to a remote transparency log (non-fatal on failure)
+- `--log-api-key` provides the API key for Sigil LogServer write operations
+- SBOM format is auto-detected per entry for CycloneDX and SPDX JSON entries
+- NuGet `.nuspec` metadata is extracted from `.nupkg` archives (package id, version, authors)
+- 500 MB per-entry size limit for zip bomb protection
+
+**verify-archive**: Verify an archive signature with per-entry digest checking.
+- `<archive>` is the path to the archive file
+- Default signature path is `<archive>.archive.sig.json`; override with `--signature`
+- Verifies per-entry digest integrity and shared signature validity
+- Reports extra entries in the archive not covered by the envelope (warning, not failure)
+- `--trust-bundle` and `--authority` enable trust evaluation
+- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
+- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
+
 ## Dotnet tool reference
 
 Sigil is distributed as a [.NET tool](https://learn.microsoft.com/en-us/dotnet/core/tools/global-tools). The NuGet package is `Sigil.Sign`.
@@ -3671,6 +3963,15 @@ dotnet sigil verify-manifest release/manifest.sig.json
 dotnet sigil verify-manifest release/manifest.sig.json --policy policy.json
 ```
 
+**Archive signing:**
+
+```
+dotnet sigil sign-archive release.zip --key mykey.pem
+dotnet sigil sign-archive release.tar.gz --key mykey.pem --label "v2.1.0"
+dotnet sigil verify-archive release.zip
+dotnet sigil verify-archive release.zip --policy policy.json
+```
+
 **Git signing:**
 
 ```
@@ -3725,7 +4026,6 @@ sign:
 
 ## What's coming
 
-- **Archive/recursive signing** — Sign individual entries inside ZIP, tar.gz, and NuGet packages with an embedded manifest.
 - **Authenticode integration** — Embed Authenticode signatures in PE binaries for Windows OS-level trust recognition.
 - **Trust graph engine** — Build and query cryptographic trust graphs across keys, identities, artifacts, and CI systems. Answer questions like "show me everything transitively dependent on this revoked key."
 - **Key compromise impact analysis** — Instant blast radius assessment when a key leaks: all signed artifacts, affected releases, downstream dependencies, and remediation steps.
