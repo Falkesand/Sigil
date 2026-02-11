@@ -1,3 +1,6 @@
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+
 namespace Sigil.Cli.Commands;
 
 public sealed class ConsolePrompter : IConsolePrompter
@@ -35,7 +38,18 @@ public sealed class ConsolePrompter : IConsolePrompter
                 Console.Error.Write('*');
             }
 
-            return chars.Count == 0 ? null : new string([.. chars]);
+            if (chars.Count == 0)
+                return null;
+
+            char[] arr = chars.ToArray();
+            try
+            {
+                return new string(arr);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(arr.AsSpan()));
+            }
         }
         finally
         {

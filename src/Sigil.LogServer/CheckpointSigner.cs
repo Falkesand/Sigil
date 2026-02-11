@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -19,10 +20,19 @@ public sealed class CheckpointSigner : ICheckpointSigner
 
     public static CheckpointSigner FromPem(string pemPath)
     {
-        var pem = File.ReadAllText(pemPath);
-        var ecdsa = ECDsa.Create();
-        ecdsa.ImportFromPem(pem);
-        return new CheckpointSigner(ecdsa);
+        byte[] pemBytes = File.ReadAllBytes(pemPath);
+        char[] pemChars = Encoding.UTF8.GetChars(pemBytes);
+        try
+        {
+            var ecdsa = ECDsa.Create();
+            ecdsa.ImportFromPem(pemChars);
+            return new CheckpointSigner(ecdsa);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(pemBytes);
+            CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(pemChars.AsSpan()));
+        }
     }
 
     public static CheckpointSigner FromPfx(string pfxPath, string? password = null)

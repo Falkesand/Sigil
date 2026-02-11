@@ -157,12 +157,17 @@ builder.Services.AddSingleton(logService);
 
 var app = builder.Build();
 
+// Passwords are no longer needed — ConfigureKestrel lambda has executed during Build()
+keyPassword = null;
+certPassword = null;
+
 // HTTPS redirection + HSTS as defense-in-depth
 app.UseHsts();
 app.UseHttpsRedirection();
 
-// API key middleware
+// API key middleware — middleware constructor hashes the key immediately
 app.UseMiddleware<ApiKeyMiddleware>(apiKey);
+apiKey = null; // Release reference — middleware only retains the SHA256 hash
 
 // Map all API endpoints
 EndpointMapper.Map(app, logService, store, signer);
