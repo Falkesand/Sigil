@@ -44,7 +44,7 @@ public static class PassphraseResolver
                 var targetName = BuildTargetName(keyPath);
                 var credResult = credentialStore.Retrieve(targetName);
                 if (credResult.IsSuccess)
-                    return credResult.Value;
+                    return credResult.Value; // Note: .NET string immutability prevents zeroing
             }
         }
 

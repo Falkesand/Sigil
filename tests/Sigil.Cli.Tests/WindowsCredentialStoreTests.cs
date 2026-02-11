@@ -159,6 +159,23 @@ public class WindowsCredentialStoreTests : IDisposable
     }
 
     [Fact]
+    public void Store_And_Retrieve_UnicodeSecret_RoundTrips()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var store = new WindowsCredentialStore();
+        var target = _testPrefix + "unicode";
+        _createdTargets.Add(target);
+
+        var secret = "p\u00e4ssw\u00f6rd-\u2603-\u2764";
+        store.Store(target, secret);
+
+        var result = store.Retrieve(target);
+        Assert.True(result.IsSuccess);
+        Assert.Equal(secret, result.Value);
+    }
+
+    [Fact]
     public void CredentialStoreFactory_ReturnsStoreOnWindows()
     {
         var store = CredentialStoreFactory.TryCreate();

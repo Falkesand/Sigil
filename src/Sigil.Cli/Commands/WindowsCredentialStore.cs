@@ -9,6 +9,8 @@ namespace Sigil.Cli.Commands;
 public sealed class WindowsCredentialStore : ICredentialStore
 {
     private const int CredTypeGeneric = 1;
+    // CRED_PERSIST_LOCAL_MACHINE (2): credential persists across logon sessions.
+    // Still scoped to the current user profile via DPAPI, not machine-wide access.
     private const int CredPersistLocalMachine = 2;
     private const int ErrorNotFound = 1168;
     private const int MaxTargetLength = 337; // CRED_MAX_GENERIC_TARGET_NAME_LENGTH
@@ -102,8 +104,8 @@ public sealed class WindowsCredentialStore : ICredentialStore
             finally
             {
                 // Zero the unmanaged blob before freeing
-                var zeroBytes = new byte[secretBytes.Length];
-                Marshal.Copy(zeroBytes, 0, cred.CredentialBlob, secretBytes.Length);
+                for (int i = 0; i < secretBytes.Length; i++)
+                    Marshal.WriteByte(cred.CredentialBlob, i, 0);
                 Marshal.FreeHGlobal(cred.CredentialBlob);
             }
         }
@@ -179,7 +181,7 @@ public sealed class WindowsCredentialStore : ICredentialStore
         public int Type;
         public string? TargetName;
         public string? Comment;
-        public long LastWritten;
+        public long LastWritten; // FILETIME (two DWORDs, 8 bytes) — never read, size-matched
         public uint CredentialBlobSize;
         public IntPtr CredentialBlob;
         public int Persist;

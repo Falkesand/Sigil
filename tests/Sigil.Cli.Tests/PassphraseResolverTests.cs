@@ -322,6 +322,17 @@ public class PassphraseResolverTests : IDisposable
     }
 
     [Fact]
+    public void BuildTargetName_HandlesSpacesAndSpecialChars()
+    {
+        var keyPath = Path.Combine(_tempDir, "my keys", "test (1).pem");
+        var expected = Path.GetFullPath(keyPath);
+
+        var targetName = PassphraseResolver.BuildTargetName(keyPath);
+
+        Assert.Equal($"sigil:passphrase:{expected}", targetName);
+    }
+
+    [Fact]
     public void Resolve_CliPassphraseFile_OverCredentialStore()
     {
         var path = WritePassphraseFile("file-secret");
