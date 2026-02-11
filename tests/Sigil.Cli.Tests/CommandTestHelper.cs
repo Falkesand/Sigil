@@ -114,6 +114,8 @@ public static class CommandTestHelper
             rootCommand.Add(VerifyImageCommand.Create());
             rootCommand.Add(SignManifestCommand.Create());
             rootCommand.Add(VerifyManifestCommand.Create());
+            rootCommand.Add(SignArchiveCommand.Create());
+            rootCommand.Add(VerifyArchiveCommand.Create());
             rootCommand.Add(CredentialCommand.Create());
 
             Environment.ExitCode = 0;
