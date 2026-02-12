@@ -4627,9 +4627,105 @@ sigil attest-env <artifact> [options]
 | `--oidc-token <token>` | OIDC token for keyless signing (auto-detected from CI if omitted) |
 | `--timestamp <url>` | TSA URL for RFC 3161 timestamping (required with `--keyless`) |
 
+## Anomaly Detection
+
+Sigil can learn normal signing patterns from a project's history and flag deviations. This is deterministic, rules-based detection -- not ML -- that runs locally with zero external dependencies.
+
+### Learning a Baseline
+
+```
+sigil baseline learn --scan <dir> [--output <path>]
+```
+
+Scans `*.sig.json` files in `<dir>` and builds a baseline of observed signing patterns:
+
+- **Signer fingerprints** -- which keys have signed artifacts
+- **OIDC identities** -- which CI/CD identities have been used
+- **Signing hours** -- what hours (UTC) signatures occur
+- **Algorithms** -- which cryptographic algorithms are in use
+- **Labels** -- which signature labels appear
+
+Default output: `<dir>/.sigil.baseline.json`
+
+### Detecting Anomalies
+
+```
+sigil verify <file> --anomaly [--baseline <path>]
+```
+
+After normal verification, loads the baseline and checks for deviations:
+
+| Rule | Default Severity | Trigger |
+|------|-----------------|---------|
+| Unknown Signer | Warning | Signer fingerprint not seen in baseline |
+| Unknown OIDC Identity | Critical | OIDC issuer or identity not in baseline |
+| Off-Hours Signing | Warning | Signature timestamp hour outside baseline |
+| Unknown Algorithm | Warning | Cryptographic algorithm not in baseline |
+| Unknown Label | Info | Signature label not in baseline |
+
+Anomaly findings are **warnings only** -- they do not affect the verification exit code.
+
+### Baseline Schema
+
+The baseline file (`.sigil.baseline.json`) is a regular JSON file:
+
+```json
+{
+  "version": "1.0",
+  "kind": "anomaly-baseline",
+  "createdAt": "2026-02-12T10:00:00+00:00",
+  "sampleCount": 42,
+  "signers": {
+    "sha256:abc123...": { "count": 30, "algorithm": "ecdsa-p256" }
+  },
+  "algorithms": ["ecdsa-p256"],
+  "signingHours": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+  "thresholds": { ... },
+  "allowlist": { ... }
+}
+```
+
+### Configuring Thresholds
+
+Edit the baseline file to adjust severity levels:
+
+```json
+"thresholds": {
+  "newSignerSeverity": "Warning",
+  "offHoursSeverity": "Warning",
+  "unknownOidcSeverity": "Critical",
+  "unknownAlgorithmSeverity": "Warning",
+  "unknownLabelSeverity": "Info"
+}
+```
+
+### Allowlists
+
+Suppress known-good deviations via the allowlist:
+
+```json
+"allowlist": {
+  "signers": ["sha256:emergency-key..."],
+  "oidcIdentities": ["deploy@emergency"],
+  "hours": [2, 3],
+  "labels": ["hotfix"]
+}
+```
+
+### SIEM Integration
+
+For machine-readable output, use `sigil verify` with `--anomaly` and capture stdout. Findings include structured context for correlation:
+
+```
+  [CRITICAL] Unknown OIDC issuer: https://unknown-provider.com
+             oidcIssuer: https://unknown-provider.com
+             oidcIdentity: attacker@evil.com
+```
+
+The baseline file itself can be signed for integrity: `sigil sign .sigil.baseline.json --key <key.pem>`
+
 ## What's coming
 
-- **Anomaly detection** — Behavioral baselines for signing patterns. Detect "validly signed, but not by the usual key for this project" without SaaS.
-- **Plugin system** — Extension architecture for CVE scanners, license policy checks, SBOM diffing, and reproducibility validators.
-- **Ed25519** — When the .NET SDK ships the native API.
+- **Plugin system** -- Extension architecture for CVE scanners, license policy checks, SBOM diffing, and reproducibility validators.
+- **Ed25519** -- When the .NET SDK ships the native API.
 

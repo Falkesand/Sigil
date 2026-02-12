@@ -122,6 +122,7 @@ public static class CommandTestHelper
             rootCommand.Add(CredentialCommand.Create());
             rootCommand.Add(GraphCommand.Create());
             rootCommand.Add(ImpactCommand.Create());
+            rootCommand.Add(BaselineCommand.Create());
 
             Environment.ExitCode = 0;
             var config = new CommandLineConfiguration(rootCommand);

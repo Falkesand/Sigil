@@ -43,6 +43,7 @@ rootCommand.Add(VerifyPeCommand.Create());
 rootCommand.Add(CredentialCommand.Create());
 rootCommand.Add(GraphCommand.Create());
 rootCommand.Add(ImpactCommand.Create());
+rootCommand.Add(BaselineCommand.Create());
 
 var config = new CommandLineConfiguration(rootCommand);
 return await config.InvokeAsync(args);

@@ -124,6 +124,7 @@ sigil verify my-app.tar.gz --trust-bundle trust.json
 | Impact analysis | Instant blast radius assessment when a signing key is compromised | [Manual](docs/manual.md#key-compromise-impact-analysis) |
 | Time travel | Verify trust decisions as of any historical date for audits and compliance | [Manual](docs/manual.md#time-travel-verification) |
 | Environment fingerprint | Signed attestation capturing OS, runtime, CI metadata for build provenance | [Manual](docs/manual.md#environment-fingerprint-attestation) |
+| Anomaly detection | Learn signing patterns, detect deviations from baseline | [Manual](docs/manual.md#anomaly-detection) |
 | Passphrase management | Secure credential chain: CLI, file, env, credential manager, prompt | [Manual](docs/manual.md#passphrase-and-credential-management) |
 | SBOM detection | Auto-detect CycloneDX/SPDX and embed metadata in signatures | [Manual](docs/manual.md#sign-an-sbom) |
 
@@ -148,7 +149,6 @@ Zero external dependencies — all crypto from .NET's built-in `System.Security.
 
 ## What's coming
 
-- **Anomaly detection** — Behavioral baselines for signing patterns. Detect "validly signed, but not by the usual key for this project" without SaaS.
 - **Plugin system** — Extension architecture for CVE scanners, license policy checks, SBOM diffing, and reproducibility validators.
 - **Ed25519** — When the .NET SDK ships the native API.
 
