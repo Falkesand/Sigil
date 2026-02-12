@@ -28,6 +28,7 @@ rootCommand.Add(trustCommand);
 rootCommand.Add(DiscoverCommand.Create());
 rootCommand.Add(TimestampCommand.Create());
 rootCommand.Add(AttestCommand.Create());
+rootCommand.Add(AttestEnvCommand.Create());
 rootCommand.Add(VerifyAttestationCommand.Create());
 rootCommand.Add(LogCommand.Create());
 rootCommand.Add(GitCommand.Create());
