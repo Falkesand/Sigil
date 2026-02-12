@@ -6,7 +6,6 @@ namespace Sigil.Crypto;
 /// <summary>
 /// Signs data using ECDSA with the NIST P-256 curve.
 /// BCL-only implementation — no external dependencies.
-/// Will be swapped to Ed25519 when the native static API ships in a future .NET SDK.
 /// </summary>
 public sealed class ECDsaP256Signer : ISigner
 {

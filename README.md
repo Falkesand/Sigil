@@ -104,7 +104,7 @@ sigil verify my-app.tar.gz --trust-bundle trust.json
 | Feature | Description | Docs |
 |---------|-------------|------|
 | Ephemeral signing | Zero-setup signing with disposable keys | [Manual](docs/manual.md#quick-start) |
-| Multi-algorithm | ECDSA P-256/P-384/P-521, RSA-PSS, ML-DSA-65 (post-quantum) | [Manual](docs/manual.md#choose-your-algorithm) |
+| Multi-algorithm | ECDSA P-256/P-384/P-521, RSA-PSS, ML-DSA-65 (post-quantum), Ed25519, Ed448 | [Manual](docs/manual.md#choose-your-algorithm) |
 | Trust bundles | Declare which keys you trust, with scopes, endorsements, and revocation | [Manual](docs/manual.md#trust-bundles) |
 | Attestations | Signed in-toto/DSSE statements for SLSA provenance | [Manual](docs/manual.md#attestations) |
 | Policies | Declarative rules for key requirements, timestamps, labels, attestations | [Manual](docs/manual.md#policies) |
@@ -143,14 +143,14 @@ sigil verify my-app.tar.gz --trust-bundle trust.json
 | ECDSA P-521 | `ecdsa-p521` | Maximum NIST curve strength. |
 | RSA-PSS | `rsa-pss-sha256` | Legacy interop, 3072-bit keys. |
 | ML-DSA-65 | `ml-dsa-65` | Post-quantum (FIPS 204). |
-| Ed25519 | `ed25519` | Planned. |
+| Ed25519 | `ed25519` | High-performance Edwards curve. Via `Sigil.Crypto.BouncyCastle`. |
+| Ed448 | `ed448` | 224-bit security Edwards curve. Via `Sigil.Crypto.BouncyCastle`. |
 
-Zero external dependencies — all crypto from .NET's built-in `System.Security.Cryptography`.
+Core algorithms use .NET's built-in `System.Security.Cryptography`. Ed25519 and Ed448 are provided by the optional `Sigil.Crypto.BouncyCastle` package.
 
 ## What's coming
 
 - **Plugin system** — Extension architecture for CVE scanners, license policy checks, SBOM diffing, and reproducibility validators.
-- **Ed25519** — When the .NET SDK ships the native API.
 
 ## Documentation
 

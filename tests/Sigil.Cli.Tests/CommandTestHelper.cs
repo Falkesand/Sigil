@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Sigil.Cli.Commands;
+using Sigil.Crypto.BouncyCastle;
 
 namespace Sigil.Cli.Tests;
 
@@ -9,7 +10,14 @@ namespace Sigil.Cli.Tests;
 /// </summary>
 public static class CommandTestHelper
 {
+    private static readonly bool ProvidersRegistered = RegisterProviders();
     private static readonly SemaphoreSlim ConsoleLock = new(1, 1);
+
+    private static bool RegisterProviders()
+    {
+        BouncyCastleCryptoProvider.Register();
+        return true;
+    }
 
     public static async Task<T> RunWithEnvVarsAsync<T>(
         Dictionary<string, string?> envVars, Func<Task<T>> action)

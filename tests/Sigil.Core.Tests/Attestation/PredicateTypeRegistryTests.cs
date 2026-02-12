@@ -8,7 +8,7 @@ public class PredicateTypeRegistryTests
     [InlineData("slsa-provenance-v1", "https://slsa.dev/provenance/v1")]
     [InlineData("spdx-json", "https://spdx.dev/Document")]
     [InlineData("cyclonedx", "https://cyclonedx.org/bom")]
-    [InlineData("env-fingerprint", "https://sigil.dev/environment-fingerprint/v1")]
+    [InlineData("env-fingerprint", "https://github.com/Falkesand/Sigil/predicates/environment-fingerprint/v1")]
     public void Resolve_known_short_name_returns_uri(string shortName, string expectedUri)
     {
         var resolved = PredicateTypeRegistry.Resolve(shortName);
@@ -70,7 +70,7 @@ public class PredicateTypeRegistryTests
     {
         var uri = PredicateTypeRegistry.Resolve("env-fingerprint");
 
-        Assert.Equal("https://sigil.dev/environment-fingerprint/v1", uri);
+        Assert.Equal("https://github.com/Falkesand/Sigil/predicates/environment-fingerprint/v1", uri);
     }
 
     [Fact]

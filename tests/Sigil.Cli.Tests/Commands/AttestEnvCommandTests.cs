@@ -50,7 +50,7 @@ public class AttestEnvCommandTests : IDisposable
         var statement = JsonSerializer.Deserialize<JsonElement>(payloadBytes);
 
         Assert.Equal(
-            "https://sigil.dev/environment-fingerprint/v1",
+            "https://github.com/Falkesand/Sigil/predicates/environment-fingerprint/v1",
             statement.GetProperty("predicateType").GetString());
     }
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.29.0
+
+### Added
+
+- Ed25519 and Ed448 signing support via BouncyCastle cryptographic provider
+- `CryptoProviderRegistry` extensibility pattern for pluggable algorithm implementations
+- `Sigil.Crypto.BouncyCastle` package with `BouncyCastleCryptoProvider.Register()` entry point
+
+### Fixed
+
+- Predicate type URI domain corrected to canonical `sigil.dev` domain
+
 ## 0.6.0
 
 ### Fixed

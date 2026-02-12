@@ -7,7 +7,7 @@ public static class PredicateTypeRegistry
         ["slsa-provenance-v1"] = "https://slsa.dev/provenance/v1",
         ["spdx-json"] = "https://spdx.dev/Document",
         ["cyclonedx"] = "https://cyclonedx.org/bom",
-        ["env-fingerprint"] = "https://sigil.dev/environment-fingerprint/v1"
+        ["env-fingerprint"] = "https://github.com/Falkesand/Sigil/predicates/environment-fingerprint/v1"
     };
 
     public static string Resolve(string typeOrShortName)

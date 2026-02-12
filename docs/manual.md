@@ -101,6 +101,8 @@ sigil generate -o mykey --algorithm ecdsa-p384
 sigil generate -o mykey --algorithm ecdsa-p521
 sigil generate -o mykey --algorithm rsa-pss-sha256
 sigil generate -o mykey --algorithm ml-dsa-65
+sigil generate -o mykey --algorithm ed25519
+sigil generate -o mykey --algorithm ed448
 ```
 
 When signing with a PEM file, the algorithm is **auto-detected** — no need to specify it:
@@ -108,6 +110,7 @@ When signing with a PEM file, the algorithm is **auto-detected** — no need to 
 ```
 sigil sign my-app.tar.gz --key rsa-key.pem    # auto-detects RSA
 sigil sign my-app.tar.gz --key ec-key.pem      # auto-detects P-256, P-384, or P-521
+sigil sign my-app.tar.gz --key ed-key.pem      # auto-detects Ed25519 or Ed448
 ```
 
 For ephemeral signing with a non-default algorithm:
@@ -689,7 +692,7 @@ JCS-canonicalized(subject metadata) + SHA-256(file bytes) + JCS-canonicalized(si
 
 This binds the signature to the file content, its metadata (name, digests, SBOM metadata if present), and all signature entry fields (algorithm, keyId, timestamp, label) — preventing substitution and replay attacks.
 
-**Crypto.** All crypto comes from .NET's built-in `System.Security.Cryptography` — zero external dependencies.
+**Crypto.** Core algorithms use .NET's built-in `System.Security.Cryptography`. Ed25519 and Ed448 are provided by the optional `Sigil.Crypto.BouncyCastle` package.
 
 | Algorithm | Name | Use case |
 |-----------|------|----------|
@@ -698,9 +701,35 @@ This binds the signature to the file content, its metadata (name, digests, SBOM 
 | ECDSA P-521 | `ecdsa-p521` | Maximum NIST curve strength, compliance frameworks requiring 521-bit keys. |
 | RSA-PSS | `rsa-pss-sha256` | Legacy interop, 3072-bit keys. |
 | ML-DSA-65 | `ml-dsa-65` | Post-quantum (FIPS 204). Requires platform support. |
-| Ed25519 | `ed25519` | Planned — waiting for .NET SDK to ship the native API. |
+| Ed25519 | `ed25519` | High-performance Edwards curve. Via BouncyCastle provider. |
+| Ed448 | `ed448` | 224-bit security Edwards curve. Via BouncyCastle provider. |
 
 PEM and PFX auto-detection means you never need to tell Sigil what algorithm a key uses — it parses the key's OID from the DER encoding and dispatches to the correct implementation. PFX files (`.pfx`/`.p12`) are auto-detected by extension.
+
+### BouncyCastle cryptographic provider
+
+Ed25519 and Ed448 support is provided by the `Sigil.Crypto.BouncyCastle` package, which registers itself automatically when the Sigil CLI is installed. The provider uses [BouncyCastle](https://www.bouncycastle.org/csharp/) for the underlying cryptographic operations.
+
+**What it provides:**
+
+- `ed25519` -- Key generation, signing, and verification using Curve25519
+- `ed448` -- Key generation, signing, and verification using Curve448 (Goldilocks)
+
+**Usage is identical to built-in algorithms** -- generate keys, sign files, and verify signatures the same way:
+
+```
+sigil generate -o mykey --algorithm ed25519
+sigil sign myfile.txt --key mykey.pem
+sigil verify myfile.txt
+```
+
+```
+sigil generate -o mykey --algorithm ed448
+sigil sign myfile.txt --key mykey.pem
+sigil verify myfile.txt
+```
+
+When loading an existing Ed25519 or Ed448 PEM key, the algorithm is auto-detected -- no `--algorithm` flag needed.
 
 **SBOM detection.** When a file is signed, Sigil tries to parse it as JSON and checks for CycloneDX (`bomFormat: "CycloneDX"`) or SPDX (`spdxVersion: "SPDX-..."`) markers. Detection never throws — if the file isn't a recognized SBOM, it's signed as a plain file with no metadata.
 
@@ -4432,7 +4461,7 @@ Prove that a build came from an approved environment by capturing the OS, runtim
 
 ### Key facts
 
-- Predicate type: `https://sigil.dev/environment-fingerprint/v1` (short name: `env-fingerprint`)
+- Predicate type: `https://github.com/Falkesand/Sigil/predicates/environment-fingerprint/v1` (short name: `env-fingerprint`)
 - Output file: `<artifact>.env-attestation.json`
 - Auto-collects: OS description, CPU architecture, processor count, .NET runtime version, framework description, machine name, collection timestamp
 - Auto-detects CI: GitHub Actions, GitLab CI, Azure Pipelines, generic
@@ -4727,5 +4756,4 @@ The baseline file itself can be signed for integrity: `sigil sign .sigil.baselin
 ## What's coming
 
 - **Plugin system** -- Extension architecture for CVE scanners, license policy checks, SBOM diffing, and reproducibility validators.
-- **Ed25519** -- When the .NET SDK ships the native API.
 
