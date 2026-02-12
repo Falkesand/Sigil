@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Sigil.Cli/Sigil.Cli.csproj" />
     <Project Path="src/Sigil.Core/Sigil.Core.csproj" />
+    <Project Path="src/Sigil.Crypto.BouncyCastle/Sigil.Crypto.BouncyCastle.csproj" />
     <Project Path="src/Sigil.Vault.HashiCorp/Sigil.Vault.HashiCorp.csproj" />
     <Project Path="src/Sigil.Vault.Azure/Sigil.Vault.Azure.csproj" />
     <Project Path="src/Sigil.Vault.Aws/Sigil.Vault.Aws.csproj" />
@@ -12,6 +13,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Sigil.Cli.Tests/Sigil.Cli.Tests.csproj" />
     <Project Path="tests/Sigil.Core.Tests/Sigil.Core.Tests.csproj" />
+    <Project Path="tests/Sigil.Crypto.BouncyCastle.Tests/Sigil.Crypto.BouncyCastle.Tests.csproj" />
     <Project Path="tests/Sigil.Integration.Tests/Sigil.Integration.Tests.csproj" />
     <Project Path="tests/Sigil.Vault.HashiCorp.Tests/Sigil.Vault.HashiCorp.Tests.csproj" />
     <Project Path="tests/Sigil.Vault.Azure.Tests/Sigil.Vault.Azure.Tests.csproj" />

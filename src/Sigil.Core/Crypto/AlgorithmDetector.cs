@@ -23,6 +23,9 @@ public static class AlgorithmDetector
     // Ed25519 algorithm OID: 1.3.101.112
     private const string OidEd25519 = "1.3.101.112";
 
+    // Ed448 algorithm OID: 1.3.101.113
+    private const string OidEd448 = "1.3.101.113";
+
     // ML-DSA-65 algorithm OID: 2.16.840.1.101.3.4.3.18
     private const string OidMLDsa65 = "2.16.840.1.101.3.4.3.18";
 
@@ -94,6 +97,7 @@ public static class AlgorithmDetector
             OidEcPublicKey => DetectEcCurve(algIdSequence),
             OidRsaEncryption => SigningAlgorithm.Rsa,
             OidEd25519 => SigningAlgorithm.Ed25519,
+            OidEd448 => SigningAlgorithm.Ed448,
             OidMLDsa65 => SigningAlgorithm.MLDsa65,
             _ => throw new NotSupportedException($"Unsupported algorithm OID: {algorithmOid}")
         };

@@ -11,17 +11,25 @@ public static class SignerFactory
     /// <summary>
     /// Generates a new signer with a fresh key pair for the specified algorithm.
     /// </summary>
-    public static ISigner Generate(SigningAlgorithm algorithm) => algorithm switch
+    public static ISigner Generate(SigningAlgorithm algorithm)
     {
-        SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.Generate(),
-        SigningAlgorithm.ECDsaP384 => ECDsaP384Signer.Generate(),
-        SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.Generate(),
-        SigningAlgorithm.Rsa => RsaSigner.Generate(),
-        SigningAlgorithm.Ed25519 => throw new NotSupportedException(
-            "Ed25519 is not yet available in this .NET SDK. It will be supported in a future release."),
-        SigningAlgorithm.MLDsa65 => MLDsa65Signer.Generate(),
-        _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
-    };
+        if (CryptoProviderRegistry.TryGet(algorithm, out var provider))
+            return provider.Generate();
+
+        return algorithm switch
+        {
+            SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.Generate(),
+            SigningAlgorithm.ECDsaP384 => ECDsaP384Signer.Generate(),
+            SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.Generate(),
+            SigningAlgorithm.Rsa => RsaSigner.Generate(),
+            SigningAlgorithm.Ed25519 => throw new NotSupportedException(
+                "Ed25519 is not yet available in this .NET SDK. It will be supported in a future release."),
+            SigningAlgorithm.MLDsa65 => MLDsa65Signer.Generate(),
+            SigningAlgorithm.Ed448 => throw new NotSupportedException(
+                "Ed448 is not yet available in this .NET SDK. Register a cryptographic provider to use Ed448."),
+            _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
+        };
+    }
 
     /// <summary>
     /// Creates a signer from DER-encoded PKCS#8 private key bytes, auto-detecting the algorithm.
@@ -34,6 +42,9 @@ public static class SignerFactory
 
         var algorithm = AlgorithmDetector.DetectFromPkcs8Der(pkcs8Der);
 
+        if (CryptoProviderRegistry.TryGet(algorithm, out var provider))
+            return provider.FromPkcs8(pkcs8Der);
+
         return algorithm switch
         {
             SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.FromPkcs8(pkcs8Der),
@@ -43,6 +54,8 @@ public static class SignerFactory
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
                 "Ed25519 is not yet available in this .NET SDK."),
             SigningAlgorithm.MLDsa65 => MLDsa65Signer.FromPkcs8(pkcs8Der),
+            SigningAlgorithm.Ed448 => throw new NotSupportedException(
+                "Ed448 is not yet available in this .NET SDK."),
             _ => throw new NotSupportedException($"Unsupported algorithm: {algorithm}")
         };
     }
@@ -142,6 +155,11 @@ public static class SignerFactory
         if (passphrase.IsEmpty || passphrase.IsWhiteSpace())
             throw new ArgumentException("Passphrase required for encrypted PEM.", nameof(passphrase));
 
+        if (CryptoProviderRegistry.TryGet(algorithm, out var provider))
+            return provider.FromPem(
+                new ReadOnlyMemory<char>(pem.ToString().ToCharArray()),
+                new ReadOnlyMemory<char>(passphrase.ToString().ToCharArray()));
+
         return algorithm switch
         {
             SigningAlgorithm.ECDsaP256 => ECDsaP256Signer.FromEncryptedPem(pem, passphrase),
@@ -151,6 +169,8 @@ public static class SignerFactory
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
                 "Ed25519 is not yet available in this .NET SDK."),
             SigningAlgorithm.MLDsa65 => MLDsa65Signer.FromEncryptedPem(pem, passphrase),
+            SigningAlgorithm.Ed448 => throw new NotSupportedException(
+                "Ed448 is not yet available in this .NET SDK."),
             _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
         };
     }
@@ -206,6 +226,24 @@ public static class SignerFactory
         catch (PlatformNotSupportedException ex)
         {
             exceptions.Add(ex);
+        }
+
+        // Try registered providers (e.g. BouncyCastle Ed25519/Ed448)
+        foreach (SigningAlgorithm registeredAlg in Enum.GetValues<SigningAlgorithm>())
+        {
+            if (CryptoProviderRegistry.TryGet(registeredAlg, out var regProvider))
+            {
+                try
+                {
+                    return regProvider.FromPem(
+                        new ReadOnlyMemory<char>(pem.ToString().ToCharArray()),
+                        new ReadOnlyMemory<char>(passphrase.ToString().ToCharArray()));
+                }
+                catch (Exception ex) when (ex is CryptographicException or NotSupportedException or FormatException or ArgumentException or System.IO.IOException)
+                {
+                    exceptions.Add(ex);
+                }
+            }
         }
 
         // If all CryptographicExceptions have the same message, it's a passphrase issue —

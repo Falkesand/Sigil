@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Sigil.Crypto.BouncyCastle</RootNamespace>
+    <PackageId>Sigil.Crypto.BouncyCastle</PackageId>
+    <Description>BouncyCastle cryptographic provider for Sigil (Ed25519, Ed448)</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sigil.Core\Sigil.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" />
+  </ItemGroup>
+
+</Project>

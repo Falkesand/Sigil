@@ -1,5 +1,9 @@
 using Sigil.Cli.Commands;
+using Sigil.Crypto.BouncyCastle;
 using System.CommandLine;
+
+// Register BouncyCastle providers for Ed25519 and Ed448 support
+BouncyCastleCryptoProvider.Register();
 
 // Intercept git-sign before System.CommandLine — git passes GPG-compat args
 // that don't conform to System.CommandLine conventions.

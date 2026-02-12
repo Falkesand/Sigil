@@ -15,6 +15,9 @@ public static class VerifierFactory
 
         var algorithm = SigningAlgorithmExtensions.ParseAlgorithm(algorithmName);
 
+        if (CryptoProviderRegistry.TryGet(algorithm, out var provider))
+            return provider.FromSpki(spki);
+
         return algorithm switch
         {
             SigningAlgorithm.ECDsaP256 => ECDsaP256Verifier.FromPublicKey(spki),
@@ -24,6 +27,8 @@ public static class VerifierFactory
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
                 "Ed25519 is not yet available in this .NET SDK. It will be supported in a future release."),
             SigningAlgorithm.MLDsa65 => MLDsa65Verifier.FromPublicKey(spki),
+            SigningAlgorithm.Ed448 => throw new NotSupportedException(
+                "Ed448 is not yet available in this .NET SDK. Register a cryptographic provider to use Ed448."),
             _ => throw new NotSupportedException($"Unsupported algorithm: {algorithmName}")
         };
     }
