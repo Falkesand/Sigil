@@ -2,7 +2,17 @@
 
 Cryptographic signing and verification for any file. No cloud, no accounts, no dependencies beyond the .NET BCL.
 
+## Disclaimer
+
+This tool is developed primarily for the author's internal and personal use and is made available to the community under the terms of its [license](LICENSE). You are welcome to use it, but you do so entirely at your own risk. The software is provided as-is with no warranties or guarantees of fitness for any particular purpose, and the author assumes no liability for any issues arising from its use.
+
 ## Install
+
+### Pre-built executables (recommended)
+
+Pre-built self-contained executables are available for Windows, Linux, and macOS as [GitHub Releases](https://github.com/Falkesand/Sigil/releases). These require no .NET SDK or runtime — download, extract, and run.
+
+### .NET global tool
 
 Requires [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
@@ -63,6 +73,8 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
 Sigil is for people who want to sign things **without asking permission from a cloud service**.
+
+For a comprehensive feature-by-feature comparison, see [Competitive Comparison](docs/comparison.md).
 
 ## Quick start
 
