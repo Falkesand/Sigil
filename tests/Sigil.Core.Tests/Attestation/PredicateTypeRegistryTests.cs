@@ -8,6 +8,7 @@ public class PredicateTypeRegistryTests
     [InlineData("slsa-provenance-v1", "https://slsa.dev/provenance/v1")]
     [InlineData("spdx-json", "https://spdx.dev/Document")]
     [InlineData("cyclonedx", "https://cyclonedx.org/bom")]
+    [InlineData("env-fingerprint", "https://sigil.dev/environment-fingerprint/v1")]
     public void Resolve_known_short_name_returns_uri(string shortName, string expectedUri)
     {
         var resolved = PredicateTypeRegistry.Resolve(shortName);
@@ -65,13 +66,22 @@ public class PredicateTypeRegistryTests
     }
 
     [Fact]
+    public void Resolve_env_fingerprint_returns_correct_uri()
+    {
+        var uri = PredicateTypeRegistry.Resolve("env-fingerprint");
+
+        Assert.Equal("https://sigil.dev/environment-fingerprint/v1", uri);
+    }
+
+    [Fact]
     public void GetKnownTypes_returns_all_entries()
     {
         var known = PredicateTypeRegistry.GetKnownTypes();
 
-        Assert.Equal(3, known.Count);
+        Assert.Equal(4, known.Count);
         Assert.True(known.ContainsKey("slsa-provenance-v1"));
         Assert.True(known.ContainsKey("spdx-json"));
         Assert.True(known.ContainsKey("cyclonedx"));
+        Assert.True(known.ContainsKey("env-fingerprint"));
     }
 }

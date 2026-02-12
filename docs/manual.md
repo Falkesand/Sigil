@@ -4426,9 +4426,209 @@ sigil verify-pe <pe-file> --trust-bundle <bundle> --at <date>
 sigil verify-image <image> --trust-bundle <bundle> --at <date>
 ```
 
+## Environment fingerprint attestation
+
+Prove that a build came from an approved environment by capturing the OS, runtime, architecture, CI metadata, and custom variables as a signed [in-toto](https://in-toto.io/) attestation wrapped in a [DSSE](https://github.com/secure-systems-lab/dsse) envelope. This is the automated counterpart to manual provenance predicates -- instead of writing a JSON predicate by hand, Sigil collects the environment facts for you.
+
+### Key facts
+
+- Predicate type: `https://sigil.dev/environment-fingerprint/v1` (short name: `env-fingerprint`)
+- Output file: `<artifact>.env-attestation.json`
+- Auto-collects: OS description, CPU architecture, processor count, .NET runtime version, framework description, machine name, collection timestamp
+- Auto-detects CI: GitHub Actions, GitLab CI, Azure Pipelines, generic
+- Custom variables via glob patterns with security blocklist
+- Same signing options as `sigil attest`: ephemeral, PEM, vault, cert store, keyless/OIDC
+- Zero new external dependencies
+
+### Create an environment fingerprint attestation
+
+Basic usage with ephemeral key:
+
+```
+sigil attest-env release.tar.gz
+```
+
+```
+Attested: release.tar.gz
+Algorithm: ecdsa-p256
+Key: sha256:9c8b0e1d...
+Mode: ephemeral (key not persisted)
+Attestation: release.tar.gz.env-attestation.json
+```
+
+Sign with a persistent key:
+
+```
+sigil attest-env release.tar.gz --key build-key.pem
+```
+
+Sign with a vault key:
+
+```
+sigil attest-env release.tar.gz --vault aws --vault-key alias/ci-key
+```
+
+Sign with keyless/OIDC (requires `--timestamp`):
+
+```
+sigil attest-env release.tar.gz --keyless --timestamp http://timestamp.digicert.com
+```
+
+Add an RFC 3161 timestamp:
+
+```
+sigil attest-env release.tar.gz --key build-key.pem --timestamp http://timestamp.digicert.com
+```
+
+### What gets collected
+
+The `environment` block is always present and captures the following fields from the build machine:
+
+| Field | Source | Example |
+|-------|--------|---------|
+| `osDescription` | `RuntimeInformation.OSDescription` | `Microsoft Windows 10.0.22631` |
+| `architecture` | `RuntimeInformation.ProcessArchitecture` | `X64` |
+| `processorCount` | `Environment.ProcessorCount` | `16` |
+| `runtimeVersion` | `Environment.Version` | `10.0.0` |
+| `frameworkDescription` | `RuntimeInformation.FrameworkDescription` | `.NET 10.0.0` |
+| `machineName` | `Environment.MachineName` | `build-runner-42` |
+| `collectedAt` | `DateTimeOffset.UtcNow` (ISO 8601) | `2026-02-12T14:30:00.0000000+00:00` |
+
+### CI detection
+
+When running inside a CI system, Sigil auto-detects the provider and captures pipeline metadata in the `ci` block:
+
+| Provider | Detection | Fields captured |
+|----------|-----------|-----------------|
+| **GitHub Actions** | `GITHUB_ACTIONS=true` | `RUNNER_NAME`, `GITHUB_WORKFLOW`, `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_REF`, `GITHUB_JOB`, `GITHUB_EVENT_NAME` |
+| **GitLab CI** | `GITLAB_CI=true` | `CI_RUNNER_ID`, `CI_PIPELINE_ID`, `CI_PROJECT_PATH`, `CI_COMMIT_SHA`, `CI_COMMIT_REF_NAME`, `CI_JOB_NAME`, `CI_PIPELINE_SOURCE` |
+| **Azure Pipelines** | `TF_BUILD=True` | `AGENT_NAME`, `BUILD_DEFINITIONNAME`, `BUILD_REPOSITORY_URI`, `BUILD_SOURCEVERSION`, `BUILD_SOURCEBRANCH`, `AGENT_JOBNAME`, `BUILD_REASON` |
+| **Generic CI** | `CI` is set | Provider name only (`generic`) |
+| **Local machine** | None of the above | `ci` block is omitted |
+
+All CI fields map to: `provider`, `runnerId`, `pipeline`, `repository`, `commitSha`, `branch`, `jobName`, `trigger`.
+
+### Custom variables with --include-var
+
+Capture additional environment variables using glob patterns:
+
+```
+sigil attest-env release.tar.gz --include-var "DOTNET_*" --include-var "BUILD_*"
+```
+
+The `--include-var` option is repeatable. Glob patterns support `*` (any characters) and `?` (single character). Matching is case-insensitive. Matched variables appear in the `customVariables` block, sorted alphabetically.
+
+### Security blocklist
+
+To prevent accidental credential leakage, environment variables whose names contain any of the following substrings are **always excluded**, even if they match an `--include-var` pattern:
+
+`TOKEN`, `SECRET`, `PASSWORD`, `KEY`, `CREDENTIAL`, `AUTH`, `PRIVATE`, `SIGNING`
+
+The check is case-insensitive. For example, `--include-var "GITHUB_*"` will capture `GITHUB_REPOSITORY` and `GITHUB_SHA` but will **not** capture `GITHUB_TOKEN`.
+
+### Example predicate output
+
+A realistic environment fingerprint predicate from a GitHub Actions runner:
+
+```json
+{
+  "environment": {
+    "osDescription": "Ubuntu 22.04.4 LTS",
+    "architecture": "X64",
+    "processorCount": 4,
+    "runtimeVersion": "10.0.0",
+    "frameworkDescription": ".NET 10.0.0",
+    "machineName": "fv-az1234-567",
+    "collectedAt": "2026-02-12T14:30:00.0000000+00:00"
+  },
+  "ci": {
+    "provider": "github-actions",
+    "runnerId": "GitHub Actions 42",
+    "pipeline": "release",
+    "repository": "myorg/myapp",
+    "commitSha": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "branch": "refs/tags/v2.1.0",
+    "jobName": "build",
+    "trigger": "push"
+  },
+  "customVariables": {
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_ROOT": "/usr/share/dotnet"
+  }
+}
+```
+
+### Verify an environment fingerprint attestation
+
+Environment fingerprint attestations are standard DSSE envelopes. Verify them with `sigil verify-attestation`:
+
+```
+sigil verify-attestation release.tar.gz --attestation release.tar.gz.env-attestation.json
+```
+
+Filter by predicate type to ensure the attestation is specifically an environment fingerprint:
+
+```
+sigil verify-attestation release.tar.gz --attestation release.tar.gz.env-attestation.json --type env-fingerprint
+```
+
+Verify with a trust bundle:
+
+```
+sigil verify-attestation release.tar.gz --attestation release.tar.gz.env-attestation.json --trust-bundle trust.json --authority sha256:def456...
+```
+
+### Example workflow: golden image enforcement
+
+**Step 1.** In your CI pipeline, create the environment fingerprint attestation alongside your regular build signature:
+
+```
+sigil sign release.tar.gz --key build-key.pem
+sigil attest-env release.tar.gz --key build-key.pem --include-var "DOTNET_*"
+```
+
+**Step 2.** In your deployment pipeline, verify both the signature and the environment attestation:
+
+```
+sigil verify release.tar.gz --trust-bundle trust.json
+sigil verify-attestation release.tar.gz --attestation release.tar.gz.env-attestation.json --trust-bundle trust.json --type env-fingerprint
+```
+
+**Step 3.** Inspect the predicate to confirm the build ran on an approved OS and runtime:
+
+```
+# Extract and inspect the predicate (the payload is base64-encoded)
+sigil verify-attestation release.tar.gz --attestation release.tar.gz.env-attestation.json
+```
+
+The combination of a regular file signature and an environment fingerprint attestation proves both **what** was built and **where** it was built.
+
+### CLI reference
+
+```
+sigil attest-env <artifact> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `<artifact>` | Path to the artifact to attest (required) |
+| `--key <path>` | Path to a private key PEM file (ephemeral if omitted) |
+| `--include-var <pattern>` | Glob pattern for environment variables to include (repeatable) |
+| `--output <path>` | Output path for the attestation file (default: `<artifact>.env-attestation.json`) |
+| `--passphrase <value>` | Passphrase if the signing key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--algorithm <name>` | Signing algorithm (default: `ecdsa-p256`) |
+| `--label <name>` | Label for this signature |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp` |
+| `--vault-key <ref>` | Vault key reference |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+| `--keyless` | Use keyless/OIDC signing with ephemeral keys |
+| `--oidc-token <token>` | OIDC token for keyless signing (auto-detected from CI if omitted) |
+| `--timestamp <url>` | TSA URL for RFC 3161 timestamping (required with `--keyless`) |
+
 ## What's coming
 
-- **Environment fingerprint attestation** — Prove a build came from an approved golden image by capturing compiler hash, OS digest, and runner identity as a signed attestation.
 - **Anomaly detection** — Behavioral baselines for signing patterns. Detect "validly signed, but not by the usual key for this project" without SaaS.
 - **Plugin system** — Extension architecture for CVE scanners, license policy checks, SBOM diffing, and reproducibility validators.
 - **Ed25519** — When the .NET SDK ships the native API.

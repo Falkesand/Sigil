@@ -6,7 +6,8 @@ public static class PredicateTypeRegistry
     {
         ["slsa-provenance-v1"] = "https://slsa.dev/provenance/v1",
         ["spdx-json"] = "https://spdx.dev/Document",
-        ["cyclonedx"] = "https://cyclonedx.org/bom"
+        ["cyclonedx"] = "https://cyclonedx.org/bom",
+        ["env-fingerprint"] = "https://sigil.dev/environment-fingerprint/v1"
     };
 
     public static string Resolve(string typeOrShortName)
@@ -21,7 +22,7 @@ public static class PredicateTypeRegistry
             return typeOrShortName;
 
         throw new ArgumentException($"Unknown predicate type: '{typeOrShortName}'. " +
-            "Use a known short name (slsa-provenance-v1, spdx-json, cyclonedx) or a valid URI.",
+            "Use a known short name (slsa-provenance-v1, spdx-json, cyclonedx, env-fingerprint) or a valid URI.",
             nameof(typeOrShortName));
     }
 
