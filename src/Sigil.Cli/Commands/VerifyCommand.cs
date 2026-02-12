@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Globalization;
+using Sigil.Anomaly;
 using Sigil.Discovery;
 using Sigil.Keyless;
 using Sigil.Policy;
@@ -22,6 +23,8 @@ public static class VerifyCommand
         {
             Description = "Evaluate trust as of a historical date (ISO 8601, e.g. 2025-06-15 or 2025-06-15T14:30:00Z)"
         };
+        var anomalyOption = new Option<bool>("--anomaly") { Description = "Enable anomaly detection after verification" };
+        var baselineOption = new Option<string?>("--baseline") { Description = "Path to anomaly baseline file (default: <artifact-dir>/.sigil.baseline.json)" };
 
         var cmd = new Command("verify", "Verify the signature of an artifact");
         cmd.Add(artifactArg);
@@ -31,6 +34,8 @@ public static class VerifyCommand
         cmd.Add(discoverOption);
         cmd.Add(policyOption);
         cmd.Add(atOption);
+        cmd.Add(anomalyOption);
+        cmd.Add(baselineOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -41,6 +46,8 @@ public static class VerifyCommand
             var discoverUri = parseResult.GetValue(discoverOption);
             var policyPath = parseResult.GetValue(policyOption);
             var atStr = parseResult.GetValue(atOption);
+            var anomalyEnabled = parseResult.GetValue(anomalyOption);
+            var baselinePath = parseResult.GetValue(baselineOption);
             DateTimeOffset? evaluationTime = null;
             if (atStr is not null)
             {
@@ -206,6 +213,35 @@ public static class VerifyCommand
                     Console.WriteLine("\nSome signatures verified, some failed.");
                 else
                     Console.WriteLine("\nNo valid signatures found.");
+            }
+
+            // Anomaly detection (non-blocking, runs after verification)
+            if (anomalyEnabled)
+            {
+                baselinePath ??= Path.Combine(
+                    Path.GetDirectoryName(artifact.FullName) ?? ".",
+                    ".sigil.baseline.json");
+
+                if (!File.Exists(baselinePath))
+                {
+                    Console.WriteLine("\nAnomaly detection: No baseline found. Run 'sigil baseline learn' first.");
+                }
+                else
+                {
+                    var baselineJson = File.ReadAllText(baselinePath);
+                    var baselineResult = BaselineSerializer.Deserialize(baselineJson);
+                    if (!baselineResult.IsSuccess)
+                    {
+                        Console.Error.WriteLine($"\nAnomaly detection: Failed to load baseline: {baselineResult.ErrorMessage}");
+                    }
+                    else
+                    {
+                        var anomalyReport = AnomalyDetector.Detect(envelope, baselineResult.Value);
+                        var anomalyText = AnomalyFormatter.FormatText(anomalyReport);
+                        Console.WriteLine();
+                        Console.Write(anomalyText);
+                    }
+                }
             }
         });
 
