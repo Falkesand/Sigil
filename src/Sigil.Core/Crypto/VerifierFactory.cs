@@ -25,10 +25,10 @@ public static class VerifierFactory
             SigningAlgorithm.ECDsaP521 => ECDsaP521Verifier.FromPublicKey(spki),
             SigningAlgorithm.Rsa => RsaVerifier.FromPublicKey(spki),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
-                "Ed25519 is not yet available in this .NET SDK. It will be supported in a future release."),
+                "Ed25519 requires a registered cryptographic provider. Call BouncyCastleCryptoProvider.Register() or install the Sigil.Crypto.BouncyCastle package."),
             SigningAlgorithm.MLDsa65 => MLDsa65Verifier.FromPublicKey(spki),
             SigningAlgorithm.Ed448 => throw new NotSupportedException(
-                "Ed448 is not yet available in this .NET SDK. Register a cryptographic provider to use Ed448."),
+                "Ed448 requires a registered cryptographic provider. Call BouncyCastleCryptoProvider.Register() or install the Sigil.Crypto.BouncyCastle package."),
             _ => throw new NotSupportedException($"Unsupported algorithm: {algorithmName}")
         };
     }

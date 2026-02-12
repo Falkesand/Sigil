@@ -23,10 +23,10 @@ public static class SignerFactory
             SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.Generate(),
             SigningAlgorithm.Rsa => RsaSigner.Generate(),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
-                "Ed25519 is not yet available in this .NET SDK. It will be supported in a future release."),
+                "Ed25519 requires a registered cryptographic provider. Call BouncyCastleCryptoProvider.Register() or install the Sigil.Crypto.BouncyCastle package."),
             SigningAlgorithm.MLDsa65 => MLDsa65Signer.Generate(),
             SigningAlgorithm.Ed448 => throw new NotSupportedException(
-                "Ed448 is not yet available in this .NET SDK. Register a cryptographic provider to use Ed448."),
+                "Ed448 requires a registered cryptographic provider. Call BouncyCastleCryptoProvider.Register() or install the Sigil.Crypto.BouncyCastle package."),
             _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
         };
     }
@@ -52,10 +52,10 @@ public static class SignerFactory
             SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.FromPkcs8(pkcs8Der),
             SigningAlgorithm.Rsa => RsaSigner.FromPkcs8(pkcs8Der),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
-                "Ed25519 is not yet available in this .NET SDK."),
+                "Ed25519 requires a registered cryptographic provider. Call BouncyCastleCryptoProvider.Register() or install the Sigil.Crypto.BouncyCastle package."),
             SigningAlgorithm.MLDsa65 => MLDsa65Signer.FromPkcs8(pkcs8Der),
             SigningAlgorithm.Ed448 => throw new NotSupportedException(
-                "Ed448 is not yet available in this .NET SDK."),
+                "Ed448 requires a registered cryptographic provider. Call BouncyCastleCryptoProvider.Register() or install the Sigil.Crypto.BouncyCastle package."),
             _ => throw new NotSupportedException($"Unsupported algorithm: {algorithm}")
         };
     }
@@ -167,10 +167,10 @@ public static class SignerFactory
             SigningAlgorithm.ECDsaP521 => ECDsaP521Signer.FromEncryptedPem(pem, passphrase),
             SigningAlgorithm.Rsa => RsaSigner.FromEncryptedPem(pem, passphrase),
             SigningAlgorithm.Ed25519 => throw new NotSupportedException(
-                "Ed25519 is not yet available in this .NET SDK."),
+                "Ed25519 requires a registered cryptographic provider. Call BouncyCastleCryptoProvider.Register() or install the Sigil.Crypto.BouncyCastle package."),
             SigningAlgorithm.MLDsa65 => MLDsa65Signer.FromEncryptedPem(pem, passphrase),
             SigningAlgorithm.Ed448 => throw new NotSupportedException(
-                "Ed448 is not yet available in this .NET SDK."),
+                "Ed448 requires a registered cryptographic provider. Call BouncyCastleCryptoProvider.Register() or install the Sigil.Crypto.BouncyCastle package."),
             _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
         };
     }
