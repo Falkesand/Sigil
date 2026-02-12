@@ -28,6 +28,8 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Verify a manifest](#verify-a-manifest)
   - [Sign an archive](#sign-an-archive)
   - [Verify an archive](#verify-an-archive)
+  - [Sign a PE binary](#sign-a-pe-binary)
+  - [Verify a PE binary](#verify-a-pe-binary)
 - [Cross-platform notes](#cross-platform-notes)
 - [Ephemeral vs persistent vs vault](#ephemeral-vs-persistent-vs-vault)
 - [Envelope format](#envelope-format)
@@ -126,6 +128,12 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [NuGet package metadata](#nuget-package-metadata)
   - [How archive signing works](#how-archive-signing-works)
   - [Archive envelope format](#archive-envelope-format)
+- [Authenticode PE signing](#authenticode-pe-signing)
+  - [Sign a PE binary](#sign-a-pe-binary-1)
+  - [Verify a PE binary](#verify-a-pe-binary-1)
+  - [Tampered PE detection](#tampered-pe-detection)
+  - [Dual-signature model](#dual-signature-model)
+  - [How Authenticode PE signing works](#how-authenticode-pe-signing-works)
 - [Keyless/OIDC signing](#keylessoidc-signing)
   - [Sign in GitHub Actions](#sign-in-github-actions)
   - [Sign in GitLab CI](#sign-in-gitlab-ci)
@@ -158,6 +166,7 @@ Sigil lets you **sign files** and **verify signatures**. That's it.
 - Sign a file — Sigil produces a small `.sig.json` file next to it
 - Sign a directory — Sigil produces a single `.manifest.sig.json` covering all files atomically
 - Sign an archive — Sigil produces an `.archive.sig.json` with per-entry digests for ZIP, tar.gz, and tar files
+- Sign a PE binary — Sigil embeds a standard Authenticode signature in the PE and produces a `.sig.json` for trust/policy evaluation
 - Anyone can verify the file hasn't been tampered with — the public key is embedded in the envelope
 - No key store, no import/export, no hidden state
 
@@ -183,6 +192,7 @@ Sigil also creates **attestations** — signed [in-toto](https://in-toto.io/) st
 | Container signing | Yes (OCI 1.1 referrers) | Yes (Cosign) | No | No |
 | Batch/manifest signing | Yes (atomic multi-file) | No | No | No |
 | Archive signing | Yes (ZIP, tar.gz, tar, NuGet) | No | No | No |
+| Authenticode PE signing | Yes (embedded + detached) | No | No | Yes (signtool) |
 | Transparency log | Yes (local + remote server + Rekor) | Yes (Rekor) | No | No |
 | Post-quantum ready | Yes (ML-DSA-65) | No | No | Partial |
 
@@ -665,6 +675,50 @@ All signatures VERIFIED.
 ```
 
 Trust bundles, policies, and discovery all work with archives — same as file and manifest signatures. See [Archive signing](#archive-signing) for details.
+
+### Sign a PE binary
+
+Embed an Authenticode signature directly in a Windows PE binary (.exe, .dll):
+
+```
+sigil sign-pe MyApp.exe --key code-signing.pfx --passphrase "secret"
+```
+
+```
+PE signed: MyApp.exe
+Subject: CN=My Company
+Thumbprint: A1B2C3D4...
+Output: MyApp.exe
+Envelope: MyApp.exe.sig.json
+```
+
+Authenticode requires an X.509 certificate (PFX/P12 or Windows Certificate Store). PEM keys are not supported for PE signing.
+
+See [Authenticode PE signing](#authenticode-pe-signing) for details.
+
+### Verify a PE binary
+
+```
+sigil verify-pe MyApp.exe
+```
+
+```
+PE file: MyApp.exe
+
+Authenticode:
+  [VERIFIED] Authenticode signature is valid
+  Subject: CN=My Company
+  Issuer: CN=My Company
+  Thumbprint: A1B2C3D4...
+  Digest: SHA256
+
+Sigil envelope:
+  [VERIFIED] sha256:c017446b...
+
+  All envelope signatures VERIFIED.
+```
+
+Both the embedded Authenticode signature and the detached Sigil envelope are verified. Trust bundles, policies, and discovery work with PE verification. See [Authenticode PE signing](#authenticode-pe-signing) for details.
 
 ## Cross-platform notes
 
@@ -3228,6 +3282,156 @@ The `.archive.sig.json` envelope:
 
 The `kind` field is `"archive"` (vs `"manifest"` for directory signing or `"artifact"` for single files). Subjects are ordered deterministically by name. Each signature covers the entire subjects array.
 
+## Authenticode PE signing
+
+Sigil embeds standard [Authenticode](https://learn.microsoft.com/en-us/windows/win32/seccrypto/authenticode) signatures directly in Windows PE binaries (.exe, .dll). This gives you OS-level trust: SmartScreen recognition, UAC publisher display, and enterprise deployment compatibility. Alongside the embedded Authenticode signature, Sigil produces a detached `.sig.json` envelope so you can apply trust bundles, policies, and discovery — the same verification model as every other Sigil artifact type.
+
+**Key facts:**
+- Pure managed, cross-platform — works on Linux CI signing Windows binaries
+- PFX/P12 or Windows Certificate Store only (Authenticode requires X.509 certificates; PEM keys are rejected)
+- SHA-256 only (no SHA-1)
+- Dual output: embedded Authenticode PKCS#7 in the PE + detached `.sig.json` Sigil envelope
+- Zero new dependencies
+
+### Sign a PE binary
+
+```
+sigil sign-pe app.exe --key codesigning.pfx --passphrase "changeit"
+```
+
+```
+PE signed: app.exe
+Subject: CN=My Company
+Thumbprint: ABC123DEF456...
+Output: app.exe
+Envelope: app.exe.sig.json
+```
+
+Two signing modes are available — PFX file or Windows Certificate Store:
+
+```
+sigil sign-pe app.exe --key codesigning.pfx
+sigil sign-pe app.exe --cert-store ABC123DEF456 --store-location CurrentUser
+```
+
+Add a label and RFC 3161 timestamp (timestamps both the Authenticode signature and the Sigil envelope):
+
+```
+sigil sign-pe app.dll --key codesigning.pfx --label "v3.0.0" --timestamp http://timestamp.digicert.com
+```
+
+Write signed PE to a different path instead of overwriting in-place:
+
+```
+sigil sign-pe app.exe --key codesigning.pfx --output signed/app.exe
+```
+
+Override the envelope output path:
+
+```
+sigil sign-pe app.exe --key codesigning.pfx --envelope dist/app.sig.json
+```
+
+### Verify a PE binary
+
+```
+sigil verify-pe app.exe
+```
+
+```
+PE file: app.exe
+
+Authenticode:
+  [VERIFIED] Authenticode signature is valid
+  Subject: CN=My Company
+  Issuer: CN=My CA
+  Thumbprint: ABC123DEF456...
+  Digest: SHA256
+  Timestamp: 2026-02-11T15:30:00Z
+
+Sigil envelope:
+  [VERIFIED] sha256:c017446b...
+
+  All envelope signatures VERIFIED.
+```
+
+Default envelope path is `<pe-file>.sig.json`. Override with `--signature`:
+
+```
+sigil verify-pe app.exe --signature dist/app.sig.json
+```
+
+Trust bundles, policies, and discovery all work with PE verification:
+
+```
+sigil verify-pe app.exe --trust-bundle trust-signed.json --authority sha256:def456...
+sigil verify-pe app.exe --discover example.com
+sigil verify-pe app.exe --policy policy.json
+```
+
+### Tampered PE detection
+
+If the PE binary has been modified after signing:
+
+```
+PE file: app.exe
+
+Authenticode:
+  [FAILED] Authenticode digest mismatch.
+
+Sigil envelope:
+  [VERIFIED] sha256:c017446b...
+           Artifact digest mismatch.
+
+  Envelope signature verification FAILED.
+```
+
+The Authenticode check and Sigil envelope check are independent. A byte-level modification in the PE will fail both, but a corruption of just the `.sig.json` file will only affect the envelope verification.
+
+### Dual-signature model
+
+PE signing produces two signatures:
+
+| Signature | Location | Covers | Used by |
+|-----------|----------|--------|---------|
+| Authenticode PKCS#7 | Embedded in PE Certificate Table | PE headers + sections (excluding cert table) | Windows OS, SmartScreen, UAC, enterprise GPO |
+| Sigil `.sig.json` | Detached file | Entire signed PE (including embedded Authenticode) | Sigil trust bundles, policies, discovery |
+
+The Sigil envelope digests are computed over the **signed** PE (after the Authenticode signature is embedded). This means the envelope protects the Authenticode signature itself — stripping or replacing the Authenticode signature will fail Sigil verification.
+
+### How Authenticode PE signing works
+
+**Sign flow:**
+
+1. Parse the PE (MZ signature, PE\0\0, COFF header, Optional Header, section headers)
+2. Strip any existing Certificate Table (for re-signing)
+3. Compute the Authenticode hash: SHA-256 over headers + sections, excluding the CheckSum field (4 bytes), Certificate Table directory entry (8 bytes), and certificate data
+4. Build an `SpcIndirectDataContent` structure (ASN.1 DER) containing the digest
+5. Create a CMS/PKCS#7 `SignedData` with the SpcIndirectData as content
+6. Build a `WIN_CERTIFICATE` structure (revision 0x0200, type 0x0002) and 8-byte align
+7. Append to PE, update Certificate Table directory entry (file offset + size)
+8. Recompute and write the PE checksum (16-bit fold-and-carry + file length)
+9. If `--timestamp` is provided, apply RFC 3161 timestamp to both the Authenticode PKCS#7 and the Sigil envelope
+10. Produce the detached `.sig.json` envelope from the signed PE bytes
+
+**Verify flow:**
+
+1. Parse the PE and extract the Certificate Table
+2. Decode the CMS/PKCS#7 `SignedData` from the `WIN_CERTIFICATE`
+3. Recompute the Authenticode hash (same exclusion rules as signing)
+4. Compare the recomputed digest with the digest embedded in `SpcIndirectDataContent`
+5. Verify the CMS signature cryptographically (`CheckSignature`)
+6. Extract certificate info (subject, issuer, thumbprint) and any RFC 3161 timestamp
+7. If a `.sig.json` envelope exists, verify it independently (same as `sigil verify`)
+8. Optionally evaluate trust bundles, policies, or discovery
+
+**Security:**
+- 500 MB file size limit to prevent unbounded memory allocation
+- uint32 overflow checks on all PE section and Certificate Table bounds
+- PE parsing reads headers only — no code execution
+- PFX bytes are zeroed after loading (`CryptographicOperations.ZeroMemory`)
+- Constant-time digest comparison (`CryptographicOperations.FixedTimeEquals`)
+
 ## Keyless/OIDC signing
 
 Keyless signing lets you sign artifacts using your CI identity (GitHub Actions, GitLab CI, etc.) without managing any keys. An ephemeral key pair is generated, bound to your OIDC token, and discarded after signing. The OIDC token is embedded in the signature envelope so verifiers can confirm who signed it.
@@ -3839,6 +4043,30 @@ sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <
 - `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
 - `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
 
+**sign-pe**: Sign a PE binary (.exe, .dll) with an embedded Authenticode signature and a detached Sigil envelope.
+- `<pe-file>` is the path to the PE binary
+- Authenticode requires an X.509 certificate — PEM keys are rejected
+- Two signing modes: PFX file (`--key`) or Windows Certificate Store (`--cert-store`)
+- `--key` and `--cert-store` are mutually exclusive; one is required
+- `--store-location` specifies `CurrentUser` (default) or `LocalMachine` (requires `--cert-store`)
+- `--output` overrides the output path for the signed PE (default: overwrite in-place)
+- `--envelope` overrides the output path for the `.sig.json` (default: `<pe-file>.sig.json`)
+- `--label` attaches a label to the signature
+- `--passphrase` / `--passphrase-file` provide the PFX decryption passphrase (resolved via passphrase chain)
+- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (applied to both Authenticode and Sigil envelope)
+- 500 MB file size limit
+
+**verify-pe**: Verify the Authenticode signature and Sigil envelope of a PE binary.
+- `<pe-file>` is the path to the PE binary
+- Verifies the embedded Authenticode signature (digest recomputation + CMS signature check)
+- Reports subject, issuer, thumbprint, digest algorithm, and timestamp if present
+- If a `.sig.json` envelope exists, verifies it independently
+- Default envelope path is `<pe-file>.sig.json`; override with `--signature`
+- `--trust-bundle` and `--authority` enable trust evaluation on the Sigil envelope
+- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
+- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
+- 500 MB file size limit
+
 ## Dotnet tool reference
 
 Sigil is distributed as a [.NET tool](https://learn.microsoft.com/en-us/dotnet/core/tools/global-tools). The NuGet package is `Sigil.Sign`.
@@ -3972,6 +4200,15 @@ dotnet sigil verify-archive release.zip
 dotnet sigil verify-archive release.zip --policy policy.json
 ```
 
+**PE signing (Authenticode):**
+
+```
+dotnet sigil sign-pe app.exe --key codesigning.pfx --passphrase "changeit"
+dotnet sigil sign-pe app.dll --cert-store ABC123DEF456
+dotnet sigil verify-pe app.exe
+dotnet sigil verify-pe app.exe --policy policy.json
+```
+
 **Git signing:**
 
 ```
@@ -4026,7 +4263,6 @@ sign:
 
 ## What's coming
 
-- **Authenticode integration** — Embed Authenticode signatures in PE binaries for Windows OS-level trust recognition.
 - **Trust graph engine** — Build and query cryptographic trust graphs across keys, identities, artifacts, and CI systems. Answer questions like "show me everything transitively dependent on this revoked key."
 - **Key compromise impact analysis** — Instant blast radius assessment when a key leaks: all signed artifacts, affected releases, downstream dependencies, and remediation steps.
 - **Time travel verification** — Replay trust decisions as-of a historical date for audits, legal compliance, and incident investigations (`sigil verify artifact.bin --at 2025-03-03`).
