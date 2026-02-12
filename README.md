@@ -121,6 +121,7 @@ sigil verify my-app.tar.gz --trust-bundle trust.json
 | Keyless/OIDC | Ephemeral keys bound to GitHub Actions / GitLab CI identity | [Manual](docs/manual.md#keylessoidc-signing) |
 | Discovery | Auto-resolve trust bundles from .well-known, DNS, git repos | [Manual](docs/manual.md#discovery) |
 | Trust graph | Build and query relationship graphs across all signing artifacts | [Manual](docs/manual.md#trust-graph-engine) |
+| Impact analysis | Instant blast radius assessment when a signing key is compromised | [Manual](docs/manual.md#key-compromise-impact-analysis) |
 | Passphrase management | Secure credential chain: CLI, file, env, credential manager, prompt | [Manual](docs/manual.md#passphrase-and-credential-management) |
 | SBOM detection | Auto-detect CycloneDX/SPDX and embed metadata in signatures | [Manual](docs/manual.md#sign-an-sbom) |
 
@@ -145,7 +146,6 @@ Zero external dependencies — all crypto from .NET's built-in `System.Security.
 
 ## What's coming
 
-- **Key compromise impact analysis** — Instant blast radius assessment when a key leaks: all signed artifacts, affected releases, downstream dependencies, and remediation steps.
 - **Time travel verification** — Replay trust decisions as-of a historical date for audits, legal compliance, and incident investigations (`sigil verify artifact.bin --at 2025-03-03`).
 - **Environment fingerprint attestation** — Prove a build came from an approved golden image by capturing compiler hash, OS digest, and runner identity as a signed attestation.
 - **Anomaly detection** — Behavioral baselines for signing patterns. Detect "validly signed, but not by the usual key for this project" without SaaS.

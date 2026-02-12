@@ -4262,9 +4262,97 @@ Node IDs are deterministic: `key:<fingerprint>`, `artifact:<name>`, `identity:<i
 
 Query algorithms use BFS with visited-set cycle detection. Trust chain queries follow only SignedBy and EndorsedBy edges. Revoked impact analysis starts from keys with RevokedAt self-loop edges and transitively follows endorsement chains to find all affected downstream artifacts.
 
+## Key compromise impact analysis
+
+When a signing key is compromised, you need to know the blast radius immediately: which artifacts were signed, which endorsement chains are broken, and what steps to take. The `sigil impact` command analyzes a single key against a trust graph and produces a structured report with direct impact, transitive impact through endorsement chains, and remediation recommendations.
+
+**Key facts:**
+- Works with any key — revoked or still active (answer "what if this key leaked right now?")
+- Two input modes: `--scan <dir>` builds the graph on-the-fly, `--graph <file>` uses a pre-built graph
+- Key identification: `--fingerprint sha256:...` or `--key <pem-file>` (computes fingerprint from SPKI)
+- Output formats: human-readable text (default) or JSON for incident response tooling
+- Traverses endorsement chains to find transitively affected artifacts
+- Zero external dependencies
+
+### Analyze a key
+
+Scan a directory and analyze a specific key's impact:
+
+```
+sigil impact --fingerprint sha256:a1b2c3... --scan ./release
+```
+
+```
+Key Compromise Impact Report
+=============================
+Key:          sha256:a1b2c3...
+Label:        production-signing
+Status:       ACTIVE (not yet revoked)
+
+Direct Impact: 3 artifacts
+  - artifact:mylib.dll
+  - artifact:myapp.exe
+  - artifact:config.json
+
+Transitive Impact: 1 artifact (via endorsement chain)
+  - artifact:downstream.dll
+
+Endorsement Chain:
+  Endorses: 1 key
+    - key:sha256:d4e5f6...
+  Endorsed by: 1 key
+    - key:sha256:root...
+
+Recommendations:
+  1. Revoke this key in all trust bundles containing it
+  2. Re-sign 3 directly signed artifacts with a new key
+  3. Re-evaluate 1 transitively affected artifact
+  4. Review endorsement of 1 downstream key
+  5. Rotate to a new key pair
+  6. Audit transparency logs for unauthorized signatures
+```
+
+### Use a pre-built graph
+
+If you already have a `graph.json` from `sigil graph build`, pass it directly:
+
+```
+sigil impact --fingerprint sha256:a1b2c3... --graph graph.json
+```
+
+### Identify key from a PEM file
+
+Instead of typing the fingerprint, point to the public key PEM file:
+
+```
+sigil impact --key mykey.pub.pem --scan ./release
+```
+
+Sigil extracts the SPKI from the PEM, computes the SHA-256 fingerprint, and runs the analysis.
+
+### JSON output for automation
+
+Use `--format json` for machine-readable output, suitable for incident response pipelines:
+
+```
+sigil impact --fingerprint sha256:a1b2c3... --graph graph.json --format json --output report.json
+```
+
+The JSON contains all the same fields: `keyId`, `fingerprint`, `isRevoked`, `directArtifacts`, `transitiveArtifacts`, `endorsedKeys`, `endorsedByKeys`, `boundIdentities`, and `recommendations`.
+
+### How impact analysis works
+
+1. **Locate the key** in the trust graph by its fingerprint
+2. **Check revocation status** — look for a `RevokedAt` edge, extract timestamp and reason if present
+3. **Find direct artifacts** — all artifacts with a `SignedBy` edge pointing to this key
+4. **Traverse endorsement chains** — BFS through keys that this key endorses (via `EndorsedBy` edges), collecting all artifacts they signed
+5. **Identify bound identities** — OIDC identities connected via `IdentityBoundTo` edges
+6. **Generate recommendations** — context-aware remediation steps based on the key's current state
+
+The analysis handles cycles in endorsement chains and deduplicates artifacts that appear in both direct and transitive impact.
+
 ## What's coming
 
-- **Key compromise impact analysis** — Instant blast radius assessment when a key leaks: all signed artifacts, affected releases, downstream dependencies, and remediation steps.
 - **Time travel verification** — Replay trust decisions as-of a historical date for audits, legal compliance, and incident investigations (`sigil verify artifact.bin --at 2025-03-03`).
 - **Environment fingerprint attestation** — Prove a build came from an approved golden image by capturing compiler hash, OS digest, and runner identity as a signed attestation.
 - **Anomaly detection** — Behavioral baselines for signing patterns. Detect "validly signed, but not by the usual key for this project" without SaaS.
