@@ -153,6 +153,12 @@ Cryptographic signing and verification for any file. No cloud, no accounts, no d
   - [Passphrase files](#passphrase-files)
   - [Windows Credential Manager](#windows-credential-manager)
   - [Security recommendations](#security-recommendations)
+- [Trust graph engine](#trust-graph-engine)
+  - [Build a trust graph](#build-a-trust-graph)
+  - [Query the trust graph](#query-the-trust-graph)
+  - [Revoked key impact analysis](#revoked-key-impact-analysis)
+  - [Export for visualization](#export-for-visualization)
+  - [How the trust graph works](#how-the-trust-graph-works)
 - [CLI reference](#cli-reference)
 - [Dotnet tool reference](#dotnet-tool-reference)
 - [What's coming](#whats-coming)
@@ -3848,6 +3854,9 @@ sigil verify-manifest <manifest> [--base-path path] [--trust-bundle path] [--aut
 sigil sign-archive <archive> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
 sigil verify-archive <archive> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
 sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [--global] [--passphrase "pass"] [--passphrase-file path]
+sigil graph build --scan <path> [--output graph.json]
+sigil graph query --graph <path> [--artifact <name>] [--key <fingerprint>] [--from <node-id>] [--to <node-id>] [--chain] [--signed-by] [--path] [--reach] [--revoked] [--impact]
+sigil graph export --graph <path> --format <dot|json> [--output path]
 ```
 
 **generate**: Create a key pair for persistent signing.
@@ -4067,6 +4076,25 @@ sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <
 - `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
 - 500 MB file size limit
 
+**graph build**: Scan a directory and build a trust graph from all signing artifacts found.
+- `--scan` is required — the directory to scan for `.sig.json`, `.manifest.sig.json`, `.archive.sig.json`, `.att.json`, and `trust.json` files
+- `--output` writes the graph to a JSON file (default: `graph.json`)
+- Deduplicates nodes by ID across files (first-write-wins for properties)
+
+**graph query**: Query a trust graph.
+- `--graph` is required — the path to a previously built graph JSON file
+- `--artifact` + `--chain`: trace the signing chain from an artifact back to root authorities (follows SignedBy and EndorsedBy edges)
+- `--key` + `--signed-by`: list all artifacts signed by a given key
+- `--from` + `--to` + `--path`: find the shortest path between any two nodes
+- `--key` + `--reach`: find all nodes reachable from a given key
+- `--revoked` + `--impact`: find all artifacts transitively affected by revoked keys (traverses endorsement chains)
+
+**graph export**: Export a trust graph for visualization or programmatic consumption.
+- `--graph` is required — the path to a previously built graph JSON file
+- `--format` is required — `dot` (Graphviz DOT) or `json`
+- `--output` writes to a file; without it, writes to stdout
+- DOT output uses shapes and colors: hexagons for keys, boxes for artifacts, ellipses for identities, diamonds for attestations, cylinders for log records; revoked edges are drawn in red
+
 ## Dotnet tool reference
 
 Sigil is distributed as a [.NET tool](https://learn.microsoft.com/en-us/dotnet/core/tools/global-tools). The NuGet package is `Sigil.Sign`.
@@ -4215,6 +4243,16 @@ dotnet sigil verify-pe app.exe --policy policy.json
 dotnet sigil git config --key mykey.pem --global
 ```
 
+**Trust graph:**
+
+```
+dotnet sigil graph build --scan ./release --output graph.json
+dotnet sigil graph query --graph graph.json --artifact mylib.dll --chain
+dotnet sigil graph query --graph graph.json --key sha256:a1b2c3... --signed-by
+dotnet sigil graph query --graph graph.json --revoked --impact
+dotnet sigil graph export --graph graph.json --format dot --output graph.dot
+```
+
 ### CI/CD example
 
 A typical GitHub Actions workflow using the local tool:
@@ -4261,9 +4299,134 @@ sign:
       - artifact.tar.gz.sig.json
 ```
 
+## Trust graph engine
+
+Sigil can ingest all your signing artifacts — signature envelopes, trust bundles, attestations, manifest/archive envelopes, and transparency log entries — into an in-memory directed graph. Query the graph to trace trust chains, list everything a key has signed, find the blast radius of a revoked key, or compute shortest paths between any two nodes. Export the graph in Graphviz DOT or JSON for visualization and further analysis.
+
+**Key facts:**
+- In-memory adjacency list — no database, no external dependencies
+- Scans a directory for `.sig.json`, `.manifest.sig.json`, `.archive.sig.json`, `.att.json`, and `trust.json` files
+- Five node types: Key, Artifact, Identity, Attestation, LogRecord
+- Seven edge types: SignedBy, EndorsedBy, AttestedBy, RevokedAt, LoggedIn, IdentityBoundTo, ContainedIn
+- Deduplication: nodes are merged by ID across files (first-write-wins for properties)
+- Export to Graphviz DOT (with shapes and colors) or JSON
+
+### Build a trust graph
+
+Scan a directory containing signed artifacts and trust bundles:
+
+```
+sigil graph build --scan ./release --output graph.json
+```
+
+```
+Ingested 5 file(s): 8 nodes, 12 edges.
+Graph written to graph.json
+```
+
+The graph persists as `graph.json` and can be queried or exported in subsequent commands.
+
+### Query the trust graph
+
+**Trust chain** — trace the signing chain from an artifact back to root authorities:
+
+```
+sigil graph query --graph graph.json --artifact mylib.dll --chain
+```
+
+```
+Trust chain for artifact:mylib.dll:
+  artifact:mylib.dll
+  key:sha256:a1b2c3...
+  key:sha256:d4e5f6...
+```
+
+**Signed-by** — list everything a given key has signed:
+
+```
+sigil graph query --graph graph.json --key sha256:a1b2c3... --signed-by
+```
+
+```
+Artifacts signed by key:sha256:a1b2c3...:
+  artifact:mylib.dll
+  artifact:myapp.exe
+```
+
+**Shortest path** — find the relationship path between any two nodes:
+
+```
+sigil graph query --graph graph.json --from "artifact:mylib.dll" --to "key:sha256:d4e5f6..." --path
+```
+
+```
+Shortest path from artifact:mylib.dll to key:sha256:d4e5f6...:
+  artifact:mylib.dll -> key:sha256:a1b2c3... -> key:sha256:d4e5f6...
+```
+
+**Reachability** — find all nodes reachable from a given node:
+
+```
+sigil graph query --graph graph.json --key sha256:a1b2c3... --reach
+```
+
+### Revoked key impact analysis
+
+Find every artifact transitively affected by revoked keys — including artifacts signed by keys that were endorsed by the revoked key:
+
+```
+sigil graph query --graph graph.json --revoked --impact
+```
+
+```
+Revoked key impact analysis:
+  artifact:mylib.dll
+  artifact:myapp.exe
+```
+
+This traverses endorsement chains: if key A endorsed key B and key A is revoked, all artifacts signed by key B are included in the impact.
+
+### Export for visualization
+
+**DOT format** — pipe to Graphviz for SVG/PNG rendering:
+
+```
+sigil graph export --graph graph.json --format dot --output graph.dot
+dot -Tsvg graph.dot -o graph.svg
+```
+
+Node shapes indicate type: hexagons for keys, boxes for artifacts, ellipses for identities, diamonds for attestations, cylinders for log records. Revoked edges are drawn in red.
+
+**JSON format** — structured export for programmatic consumption:
+
+```
+sigil graph export --graph graph.json --format json --output graph-export.json
+```
+
+Write to stdout (no `--output`) for piping:
+
+```
+sigil graph export --graph graph.json --format dot | dot -Tpng > graph.png
+```
+
+### How the trust graph works
+
+The graph is built from existing Sigil data sources with no additional metadata:
+
+| Source file | Nodes created | Edges created |
+|---|---|---|
+| `.sig.json` | Artifact + Key (+ Identity, LogRecord) | SignedBy (+ IdentityBoundTo, LoggedIn) |
+| `trust.json` | Key + Identity | EndorsedBy, RevokedAt |
+| `.manifest.sig.json` | Root Artifact + Subject Artifacts + Key | ContainedIn, SignedBy |
+| `.att.json` | Artifact + Attestation + Key | AttestedBy, SignedBy |
+| Log entries | LogRecord + Key + Artifact | LoggedIn, SignedBy |
+
+Node IDs are deterministic: `key:<fingerprint>`, `artifact:<name>`, `identity:<issuer>/<pattern>`, `attestation:<type>:<name>`, `log:<index>`. The same node ID from different files is deduplicated automatically.
+
+Query algorithms use BFS with visited-set cycle detection. Trust chain queries follow only SignedBy and EndorsedBy edges. Revoked impact analysis starts from keys with RevokedAt self-loop edges and transitively follows endorsement chains to find all affected downstream artifacts.
+
 ## What's coming
 
-- **Trust graph engine** — Build and query cryptographic trust graphs across keys, identities, artifacts, and CI systems. Answer questions like "show me everything transitively dependent on this revoked key."
 - **Key compromise impact analysis** — Instant blast radius assessment when a key leaks: all signed artifacts, affected releases, downstream dependencies, and remediation steps.
 - **Time travel verification** — Replay trust decisions as-of a historical date for audits, legal compliance, and incident investigations (`sigil verify artifact.bin --at 2025-03-03`).
 - **Environment fingerprint attestation** — Prove a build came from an approved golden image by capturing compiler hash, OS digest, and runner identity as a signed attestation.
