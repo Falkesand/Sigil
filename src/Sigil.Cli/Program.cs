@@ -37,6 +37,8 @@ rootCommand.Add(SignManifestCommand.Create());
 rootCommand.Add(VerifyManifestCommand.Create());
 rootCommand.Add(SignArchiveCommand.Create());
 rootCommand.Add(VerifyArchiveCommand.Create());
+rootCommand.Add(SignPeCommand.Create());
+rootCommand.Add(VerifyPeCommand.Create());
 rootCommand.Add(CredentialCommand.Create());
 
 var config = new CommandLineConfiguration(rootCommand);
