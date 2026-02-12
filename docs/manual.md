@@ -4351,9 +4351,83 @@ The JSON contains all the same fields: `keyId`, `fingerprint`, `isRevoked`, `dir
 
 The analysis handles cycles in endorsement chains and deduplicates artifacts that appear in both direct and transitive impact.
 
+## Time travel verification
+
+"What did we believe was trusted on March 3rd?" — Sigil can replay trust decisions as of any historical date, critical for audits, legal compliance, and incident investigations.
+
+### Key facts
+
+- Available on all six verify commands: `verify`, `verify-attestation`, `verify-manifest`, `verify-archive`, `verify-pe`, `verify-image`
+- Date format: ISO 8601 / RFC 3339 (e.g. `2025-06-15` or `2025-06-15T14:30:00Z`)
+- Date-only shorthand parsed as midnight UTC
+- Revocation is temporal: a key revoked on June 1st is treated as trusted when evaluating before that date
+- Zero new dependencies
+
+### Basic usage
+
+Verify an artifact's trust status as of a specific date:
+
+```
+sigil verify mylib.dll --trust-bundle trust.json --at 2025-06-15
+```
+
+Output:
+
+```
+Evaluating trust as of: 2025-06-15T00:00:00+00:00
+Artifact: mylib.dll
+Digests: MATCH
+  [TRUSTED] sha256:abc123... (Release Key)
+           Key is directly trusted.
+
+All signatures TRUSTED.
+```
+
+### Use case: audit and compliance
+
+Prove that an artifact was trusted at deployment time:
+
+```
+# What was the trust status when we deployed v3.2.0?
+sigil verify app-v3.2.0.tar.gz --trust-bundle trust.json --at 2025-03-03
+```
+
+### Use case: incident response
+
+When a key is compromised and revoked, determine which artifacts were affected:
+
+```
+# The key was revoked today. Was it trusted when we deployed last month?
+sigil verify critical-service.dll --trust-bundle trust.json --at 2025-02-01
+# Result: TRUSTED (revocation hadn't happened yet)
+
+# Is it trusted now?
+sigil verify critical-service.dll --trust-bundle trust.json
+# Result: REVOKED
+```
+
+### How it works
+
+1. Parse the `--at` date as a `DateTimeOffset`
+2. Pass it as `evaluationTime` to the trust evaluator (defaults to current time when omitted)
+3. **Expiry check**: key is expired only if `evaluationTime >= notAfter`
+4. **Revocation check**: key is revoked only if `evaluationTime >= revokedAt`
+5. **Timestamp override**: if an RFC 3161 timestamp proves the signature was created before key expiry, the key is still trusted even when evaluating after expiry
+6. **Endorsement chains**: endorser expiry and endorsement expiry are both evaluated against the historical date
+
+### Available on all verify commands
+
+```
+sigil verify <file> --trust-bundle <bundle> --at <date>
+sigil verify-attestation <file> --trust-bundle <bundle> --at <date>
+sigil verify-manifest <manifest> --trust-bundle <bundle> --at <date>
+sigil verify-archive <archive> --trust-bundle <bundle> --at <date>
+sigil verify-pe <pe-file> --trust-bundle <bundle> --at <date>
+sigil verify-image <image> --trust-bundle <bundle> --at <date>
+```
+
 ## What's coming
 
-- **Time travel verification** — Replay trust decisions as-of a historical date for audits, legal compliance, and incident investigations (`sigil verify artifact.bin --at 2025-03-03`).
 - **Environment fingerprint attestation** — Prove a build came from an approved golden image by capturing compiler hash, OS digest, and runner identity as a signed attestation.
 - **Anomaly detection** — Behavioral baselines for signing patterns. Detect "validly signed, but not by the usual key for this project" without SaaS.
 - **Plugin system** — Extension architecture for CVE scanners, license policy checks, SBOM diffing, and reproducibility validators.

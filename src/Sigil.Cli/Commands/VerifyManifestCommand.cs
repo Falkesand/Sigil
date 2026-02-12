@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Globalization;
 using Sigil.Discovery;
 using Sigil.Keyless;
 using Sigil.Policy;
@@ -17,6 +18,10 @@ public static class VerifyManifestCommand
         var authorityOption = new Option<string?>("--authority") { Description = "Expected authority fingerprint for the trust bundle" };
         var discoverOption = new Option<string?>("--discover") { Description = "Discover trust bundle from URI" };
         var policyOption = new Option<string?>("--policy") { Description = "Path to a policy file for rule-based verification" };
+        var atOption = new Option<string?>("--at")
+        {
+            Description = "Evaluate trust as of a historical date (ISO 8601, e.g. 2025-06-15 or 2025-06-15T14:30:00Z)"
+        };
 
         var cmd = new Command("verify-manifest", "Verify a manifest signature covering multiple files");
         cmd.Add(manifestArg);
@@ -25,6 +30,7 @@ public static class VerifyManifestCommand
         cmd.Add(authorityOption);
         cmd.Add(discoverOption);
         cmd.Add(policyOption);
+        cmd.Add(atOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -34,6 +40,20 @@ public static class VerifyManifestCommand
             var authority = parseResult.GetValue(authorityOption);
             var discoverUri = parseResult.GetValue(discoverOption);
             var policyPath = parseResult.GetValue(policyOption);
+            var atStr = parseResult.GetValue(atOption);
+            DateTimeOffset? evaluationTime = null;
+            if (atStr is not null)
+            {
+                if (!DateTimeOffset.TryParse(atStr, CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal, out var parsed))
+                {
+                    Console.Error.WriteLine($"Error: Invalid date format for --at: {atStr}");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                evaluationTime = parsed;
+                Console.WriteLine($"Evaluating trust as of: {parsed:O}");
+            }
 
             // Mutual exclusion check
             if (policyPath is not null && (trustBundlePath is not null || discoverUri is not null))
@@ -98,11 +118,11 @@ public static class VerifyManifestCommand
             TrustEvaluationResult? trustResult = null;
             if (discoverUri is not null)
             {
-                trustResult = await DiscoverAndEvaluateTrustAsync(discoverUri, authority, verification, envelope);
+                trustResult = await DiscoverAndEvaluateTrustAsync(discoverUri, authority, verification, envelope, evaluationTime);
             }
             else if (trustBundlePath is not null)
             {
-                trustResult = await EvaluateTrustAsync(trustBundlePath, authority, verification, envelope);
+                trustResult = await EvaluateTrustAsync(trustBundlePath, authority, verification, envelope, evaluationTime);
             }
 
             // Display signature results
@@ -186,7 +206,8 @@ public static class VerifyManifestCommand
         string discoverUri,
         string? authority,
         VerificationResult verification,
-        ManifestEnvelope envelope)
+        ManifestEnvelope envelope,
+        DateTimeOffset? evaluationTime = null)
     {
         var dispatcher = new DiscoveryDispatcher();
         var discoveryResult = await dispatcher.ResolveAsync(discoverUri);
@@ -233,14 +254,15 @@ public static class VerifyManifestCommand
         }
 
         var oidcInfo = await VerifyOidcEntriesAsync(envelope);
-        return TrustEvaluator.Evaluate(verification, bundle, null, oidcInfo: oidcInfo);
+        return TrustEvaluator.Evaluate(verification, bundle, null, evaluationTime: evaluationTime, oidcInfo: oidcInfo);
     }
 
     private static async Task<TrustEvaluationResult?> EvaluateTrustAsync(
         string trustBundlePath,
         string? authority,
         VerificationResult verification,
-        ManifestEnvelope envelope)
+        ManifestEnvelope envelope,
+        DateTimeOffset? evaluationTime = null)
     {
         if (!File.Exists(trustBundlePath))
         {
@@ -281,7 +303,7 @@ public static class VerifyManifestCommand
         }
 
         var oidcInfo = await VerifyOidcEntriesAsync(envelope);
-        return TrustEvaluator.Evaluate(verification, bundle, null, oidcInfo: oidcInfo);
+        return TrustEvaluator.Evaluate(verification, bundle, null, evaluationTime: evaluationTime, oidcInfo: oidcInfo);
     }
 
     private static async Task<IReadOnlyDictionary<string, OidcVerificationInfo>?> VerifyOidcEntriesAsync(

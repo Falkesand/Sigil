@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Globalization;
 using Sigil.Attestation;
 using Sigil.Discovery;
 using Sigil.Policy;
@@ -18,6 +19,10 @@ public static class VerifyAttestationCommand
         var authorityOption = new Option<string?>("--authority") { Description = "Expected authority fingerprint for the trust bundle" };
         var discoverOption = new Option<string?>("--discover") { Description = "Discover trust bundle from URI" };
         var policyOption = new Option<string?>("--policy") { Description = "Path to a policy file for rule-based verification" };
+        var atOption = new Option<string?>("--at")
+        {
+            Description = "Evaluate trust as of a historical date (ISO 8601, e.g. 2025-06-15 or 2025-06-15T14:30:00Z)"
+        };
 
         var cmd = new Command("verify-attestation", "Verify a DSSE attestation for an artifact");
         cmd.Add(artifactArg);
@@ -27,6 +32,7 @@ public static class VerifyAttestationCommand
         cmd.Add(authorityOption);
         cmd.Add(discoverOption);
         cmd.Add(policyOption);
+        cmd.Add(atOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -37,6 +43,20 @@ public static class VerifyAttestationCommand
             var authority = parseResult.GetValue(authorityOption);
             var discoverUri = parseResult.GetValue(discoverOption);
             var policyPath = parseResult.GetValue(policyOption);
+            var atStr = parseResult.GetValue(atOption);
+            DateTimeOffset? evaluationTime = null;
+            if (atStr is not null)
+            {
+                if (!DateTimeOffset.TryParse(atStr, CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal, out var parsed))
+                {
+                    Console.Error.WriteLine($"Error: Invalid date format for --at: {atStr}");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                evaluationTime = parsed;
+                Console.WriteLine($"Evaluating trust as of: {parsed:O}");
+            }
 
             if (policyPath is not null && (trustBundlePath is not null || discoverUri is not null))
             {
@@ -128,12 +148,12 @@ public static class VerifyAttestationCommand
             {
                 var adapted = AttestationTrustAdapter.ToVerificationResult(result);
                 trustResult = await DiscoverAndEvaluateTrust(
-                    discoverUri, authority, adapted, artifact.Name);
+                    discoverUri, authority, adapted, artifact.Name, evaluationTime);
             }
             else if (trustBundlePath is not null)
             {
                 var adapted = AttestationTrustAdapter.ToVerificationResult(result);
-                trustResult = EvaluateTrust(trustBundlePath, authority, adapted, artifact.Name);
+                trustResult = EvaluateTrust(trustBundlePath, authority, adapted, artifact.Name, evaluationTime);
             }
 
             foreach (var sig in result.Signatures)
@@ -212,7 +232,8 @@ public static class VerifyAttestationCommand
         string discoverUri,
         string? authority,
         Signing.VerificationResult verification,
-        string? artifactName)
+        string? artifactName,
+        DateTimeOffset? evaluationTime = null)
     {
         var dispatcher = new DiscoveryDispatcher();
         var discoveryResult = await dispatcher.ResolveAsync(discoverUri);
@@ -258,14 +279,15 @@ public static class VerifyAttestationCommand
             return null;
         }
 
-        return TrustEvaluator.Evaluate(verification, bundle, artifactName);
+        return TrustEvaluator.Evaluate(verification, bundle, artifactName, evaluationTime: evaluationTime);
     }
 
     private static TrustEvaluationResult? EvaluateTrust(
         string trustBundlePath,
         string? authority,
         Signing.VerificationResult verification,
-        string? artifactName)
+        string? artifactName,
+        DateTimeOffset? evaluationTime = null)
     {
         if (!File.Exists(trustBundlePath))
         {
@@ -305,7 +327,7 @@ public static class VerifyAttestationCommand
             return null;
         }
 
-        return TrustEvaluator.Evaluate(verification, bundle, artifactName);
+        return TrustEvaluator.Evaluate(verification, bundle, artifactName, evaluationTime: evaluationTime);
     }
 
     private static void EvaluatePolicy(

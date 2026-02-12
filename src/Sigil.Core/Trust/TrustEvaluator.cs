@@ -62,16 +62,29 @@ public static class TrustEvaluator
 
         if (revocation is not null)
         {
-            var reason = revocation.Reason is not null
-                ? $"Key revoked on {revocation.RevokedAt}: {revocation.Reason}"
-                : $"Key revoked on {revocation.RevokedAt}.";
-
-            return new SignatureTrustResult
+            // Check if revocation is effective at evaluation time
+            var revocationEffective = true;
+            if (DateTimeOffset.TryParse(revocation.RevokedAt, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal, out var revokedAt))
             {
-                KeyId = sig.KeyId,
-                Decision = TrustDecision.Revoked,
-                Reason = reason
-            };
+                revocationEffective = now >= revokedAt;
+            }
+            // If revokedAt is unparseable, default to revoked (fail-safe)
+
+            if (revocationEffective)
+            {
+                var reason = revocation.Reason is not null
+                    ? $"Key revoked on {revocation.RevokedAt}: {revocation.Reason}"
+                    : $"Key revoked on {revocation.RevokedAt}.";
+
+                return new SignatureTrustResult
+                {
+                    KeyId = sig.KeyId,
+                    Decision = TrustDecision.Revoked,
+                    Reason = reason
+                };
+            }
+            // else: revocation hasn't happened yet at this evaluation time, continue to trust checks
         }
 
         // Rule 3a: Look up key directly in bundle
@@ -161,11 +174,21 @@ public static class TrustEvaluator
             if (endorserKey is null)
                 continue;
 
-            // Check if endorser is revoked
-            var endorserRevoked = bundle.Revocations.Any(r =>
+            // Check if endorser is revoked at evaluation time
+            var endorserRevocation = bundle.Revocations.FirstOrDefault(r =>
                 string.Equals(r.Fingerprint, endorsement.Endorser, StringComparison.Ordinal));
-            if (endorserRevoked)
-                continue;
+            if (endorserRevocation is not null)
+            {
+                var endorserRevocationEffective = true;
+                if (DateTimeOffset.TryParse(endorserRevocation.RevokedAt, CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal, out var endorserRevokedAt))
+                {
+                    endorserRevocationEffective = now >= endorserRevokedAt;
+                }
+
+                if (endorserRevocationEffective)
+                    continue;
+            }
 
             // Endorser must not be expired (unless timestamp proves signature predates expiry)
             if (IsExpired(endorserKey.NotAfter, now) &&
