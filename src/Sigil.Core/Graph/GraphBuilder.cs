@@ -112,6 +112,13 @@ public static class GraphBuilder
                 endorsedByEdge.Properties["notAfter"] = endorsement.NotAfter;
             }
 
+            endorsedByEdge.Properties["timestamp"] = endorsement.Timestamp;
+
+            if (endorsement.Scopes is not null)
+            {
+                endorsedByEdge.Properties["scopes"] = JsonSerializer.Serialize(endorsement.Scopes);
+            }
+
             graph.AddEdge(endorsedByEdge);
         }
 

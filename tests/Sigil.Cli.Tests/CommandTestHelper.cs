@@ -120,6 +120,7 @@ public static class CommandTestHelper
             rootCommand.Add(VerifyPeCommand.Create());
             rootCommand.Add(CredentialCommand.Create());
             rootCommand.Add(GraphCommand.Create());
+            rootCommand.Add(ImpactCommand.Create());
 
             Environment.ExitCode = 0;
             var config = new CommandLineConfiguration(rootCommand);
