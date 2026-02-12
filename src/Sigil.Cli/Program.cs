@@ -40,6 +40,7 @@ rootCommand.Add(VerifyArchiveCommand.Create());
 rootCommand.Add(SignPeCommand.Create());
 rootCommand.Add(VerifyPeCommand.Create());
 rootCommand.Add(CredentialCommand.Create());
+rootCommand.Add(GraphCommand.Create());
 
 var config = new CommandLineConfiguration(rootCommand);
 return await config.InvokeAsync(args);
