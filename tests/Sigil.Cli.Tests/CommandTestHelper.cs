@@ -119,6 +119,7 @@ public static class CommandTestHelper
             rootCommand.Add(SignPeCommand.Create());
             rootCommand.Add(VerifyPeCommand.Create());
             rootCommand.Add(CredentialCommand.Create());
+            rootCommand.Add(GraphCommand.Create());
 
             Environment.ExitCode = 0;
             var config = new CommandLineConfiguration(rootCommand);
