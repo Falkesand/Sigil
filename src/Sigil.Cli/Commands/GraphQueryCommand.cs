@@ -47,6 +47,13 @@ public static class GraphQueryCommand
             var impact = parseResult.GetValue(impactOption);
             var path = parseResult.GetValue(pathOption);
 
+            if (!File.Exists(graphPath))
+            {
+                Console.Error.WriteLine($"Error: Graph file not found: {graphPath}");
+                Environment.ExitCode = 1;
+                return;
+            }
+
             var json = await File.ReadAllTextAsync(graphPath);
             var deserializeResult = GraphSerializer.Deserialize(json);
             if (!deserializeResult.IsSuccess)

@@ -216,7 +216,7 @@ public class GraphCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Graph_query_invalid_graph_fails()
+    public async Task Graph_query_missing_graph_file_fails_with_message()
     {
         var nonExistent = Path.Combine(_tempDir, "nonexistent.json");
 
@@ -224,9 +224,25 @@ public class GraphCommandTests : IDisposable
             "graph", "query", "--graph", nonExistent, "--revoked", "--impact");
 
         Assert.Equal(1, result.ExitCode);
+        Assert.Contains("Graph file not found", result.StdErr);
+        Assert.Contains("nonexistent.json", result.StdErr);
     }
 
     // --- graph export tests ---
+
+    [Fact]
+    public async Task Graph_export_missing_graph_file_fails_with_message()
+    {
+        var nonExistent = Path.Combine(_tempDir, "nonexistent.json");
+
+        var result = await CommandTestHelper.InvokeAsync(
+            "graph", "export", "--graph", nonExistent, "--format", "dot");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("Graph file not found", result.StdErr);
+        Assert.Contains("nonexistent.json", result.StdErr);
+    }
+
 
     [Fact]
     public async Task Graph_export_dot()

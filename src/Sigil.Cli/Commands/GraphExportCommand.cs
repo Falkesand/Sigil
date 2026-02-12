@@ -24,6 +24,13 @@ public static class GraphExportCommand
             var format = parseResult.GetValue(formatOption)!;
             var output = parseResult.GetValue(outputOption);
 
+            if (!File.Exists(graphPath))
+            {
+                Console.Error.WriteLine($"Error: Graph file not found: {graphPath}");
+                Environment.ExitCode = 1;
+                return;
+            }
+
             var json = await File.ReadAllTextAsync(graphPath);
             var deserializeResult = GraphSerializer.Deserialize(json);
             if (!deserializeResult.IsSuccess)
