@@ -3686,280 +3686,660 @@ Avoid `--passphrase` on the CLI when possible — the value may appear in shell 
 
 ## CLI reference
 
+Complete reference for all Sigil commands. Run `sigil <command> --help` for the most current syntax.
+
+### sigil generate
+
+Generate a new signing key pair.
+
 ```
-sigil generate [-o prefix] [--passphrase "pass"] [--algorithm name]
-sigil sign <file> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--keyless] [--oidc-token <jwt>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
-sigil verify <file> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil attest <file> --predicate <json> --type <type> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>]
-sigil verify-attestation <file> [--attestation path] [--type type] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil timestamp <envelope> --tsa <tsa-url> [--index <n>]
-sigil trust create --name <name> [-o path] [--description "text"]
-sigil trust add <bundle> --fingerprint <fp> [--name "display name"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...] [--scope-algorithms algs...]
-sigil trust remove <bundle> --fingerprint <fp>
-sigil trust endorse <bundle> --endorser <fp> --endorsed <fp> [--statement "text"] [--not-after date] [--scope-names patterns...] [--scope-labels labels...]
-sigil trust sign <bundle> --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [-o path] [--passphrase "pass"] [--passphrase-file path]
-sigil trust revoke <bundle> --fingerprint <fp> [--reason "text"]
-sigil trust identity-add <bundle> --issuer <url> --subject <pattern> [--name "display name"] [--not-after date]
-sigil trust identity-remove <bundle> --issuer <url> --subject <pattern>
+sigil generate [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-o <prefix>` | Output file prefix (writes `<prefix>.pem` and `<prefix>.pub.pem`) |
+| `--passphrase <value>` | Passphrase to encrypt the private key |
+| `--passphrase-file <path>` | Path to file containing the encryption passphrase |
+| `--algorithm <alg>` | Signing algorithm: `ecdsa-p256` (default), `ecdsa-p384`, `ecdsa-p521`, `ed25519`, `ed448`, `rsa-pss-sha256`, `ml-dsa-65` |
+
+### sigil sign
+
+Sign an artifact and produce a detached signature envelope.
+
+```
+sigil sign <artifact> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--key <path>` | Path to a private key PEM file (ephemeral if omitted) |
+| `--output <path>` | Output path for the signature file |
+| `--label <value>` | Label for this signature |
+| `--passphrase <value>` | Passphrase if the signing key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--algorithm <alg>` | Signing algorithm (ephemeral default: `ecdsa-p256`; also used as hint for encrypted PEM detection) |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp` |
+| `--vault-key <ref>` | Vault key reference (format depends on provider) |
+| `--timestamp <url>` | TSA URL for RFC 3161 timestamping |
+| `--keyless` | Use keyless/OIDC signing with ephemeral keys |
+| `--oidc-token <token>` | OIDC token for keyless signing (auto-detected from CI if omitted) |
+| `--log-url <url>` | Remote transparency log URL, or `rekor` for Sigstore public log |
+| `--log-api-key <key>` | API key for Sigil log server (not needed for Rekor) |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+
+### sigil verify
+
+Verify the signature of an artifact.
+
+```
+sigil verify <artifact> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--signature <path>` | Path to the signature file (default: `<artifact>.sig.json`) |
+| `--trust-bundle <path>` | Path to a signed trust bundle for trust evaluation |
+| `--authority <fp>` | Expected authority fingerprint for the trust bundle |
+| `--discover <uri>` | Discover trust bundle from URI (well-known URL, `dns:domain`, or `git:url`) |
+| `--policy <path>` | Path to a policy file for rule-based verification |
+| `--at <date>` | Evaluate trust as of a historical date (ISO 8601, e.g. `2025-06-15` or `2025-06-15T14:30:00Z`) |
+| `--anomaly` | Enable anomaly detection after verification |
+| `--baseline <path>` | Path to anomaly baseline file (default: `<artifact-dir>/.sigil.baseline.json`) |
+
+### sigil timestamp
+
+Apply RFC 3161 timestamp tokens to signature entries.
+
+```
+sigil timestamp <envelope> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--tsa <url>` | **(Required)** TSA URL for RFC 3161 timestamping |
+| `--index <n>` | Specific signature index to timestamp (default: all without tokens) |
+
+### sigil attest
+
+Create a DSSE attestation for an artifact.
+
+```
+sigil attest <artifact> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--predicate <path>` | **(Required)** Path to the predicate JSON file |
+| `--type <type>` | **(Required)** Predicate type (short name or URI) |
+| `--key <path>` | Path to a private key PEM file (ephemeral if omitted) |
+| `--output <path>` | Output path for the attestation file |
+| `--passphrase <value>` | Passphrase if the signing key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--algorithm <alg>` | Signing algorithm (ephemeral default: `ecdsa-p256`) |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp` |
+| `--vault-key <ref>` | Vault key reference |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+| `--timestamp <url>` | TSA URL for RFC 3161 timestamping |
+
+### sigil attest-env
+
+Create a DSSE environment fingerprint attestation for an artifact.
+
+```
+sigil attest-env <artifact> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--key <path>` | Path to a private key PEM file (ephemeral if omitted) |
+| `--include-var <pattern>` | Glob pattern for environment variables to include (repeatable) |
+| `--output <path>` | Output path for the attestation file |
+| `--passphrase <value>` | Passphrase if the signing key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--algorithm <alg>` | Signing algorithm (ephemeral default: `ecdsa-p256`) |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp` |
+| `--vault-key <ref>` | Vault key reference |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+| `--keyless` | Use keyless/OIDC signing with ephemeral keys |
+| `--oidc-token <token>` | OIDC token for keyless signing (auto-detected from CI if omitted) |
+| `--timestamp <url>` | TSA URL for RFC 3161 timestamping |
+
+### sigil verify-attestation
+
+Verify a DSSE attestation for an artifact.
+
+```
+sigil verify-attestation <artifact> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--attestation <path>` | Path to the attestation file (default: `<artifact>.att.json`) |
+| `--type <type>` | Expected predicate type (short name or URI) |
+| `--trust-bundle <path>` | Path to a signed trust bundle |
+| `--authority <fp>` | Expected authority fingerprint for the trust bundle |
+| `--discover <uri>` | Discover trust bundle from URI |
+| `--policy <path>` | Path to a policy file for rule-based verification |
+| `--at <date>` | Evaluate trust as of a historical date (ISO 8601) |
+
+### sigil sign-image
+
+Sign an OCI container image.
+
+```
+sigil sign-image <image> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--key <path>` | Path to a private key PEM file (ephemeral if omitted) |
+| `--passphrase <value>` | Passphrase if the signing key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--algorithm <alg>` | Signing algorithm (ephemeral default: `ecdsa-p256`) |
+| `--label <value>` | Label for this signature |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp`, `pkcs11` |
+| `--vault-key <ref>` | Vault key reference |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+| `--timestamp <url>` | TSA URL for RFC 3161 timestamping |
+| `--log-url <url>` | Remote transparency log URL, or `rekor` for Sigstore public log |
+| `--log-api-key <key>` | API key for Sigil log server (not needed for Rekor) |
+
+### sigil verify-image
+
+Verify signatures on an OCI container image.
+
+```
+sigil verify-image <image> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--trust-bundle <path>` | Path to a signed trust bundle |
+| `--authority <fp>` | Expected authority fingerprint |
+| `--discover <uri>` | Discover trust bundle from URI |
+| `--policy <path>` | Path to a policy file |
+| `--at <date>` | Evaluate trust as of a historical date (ISO 8601) |
+
+### sigil sign-manifest
+
+Sign multiple files with a shared manifest signature.
+
+```
+sigil sign-manifest <path> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--key <path>` | Path to a private key PEM file (ephemeral if omitted) |
+| `--output <path>` | Output path for the manifest file |
+| `--label <value>` | Label for this signature |
+| `--passphrase <value>` | Passphrase if the signing key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--algorithm <alg>` | Signing algorithm (ephemeral default: `ecdsa-p256`) |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp` |
+| `--vault-key <ref>` | Vault key reference |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+| `--timestamp <url>` | TSA URL for RFC 3161 timestamping |
+| `--include <glob>` | Glob filter for files (e.g. `*.dll`) |
+| `--log-url <url>` | Remote transparency log URL, or `rekor` for Sigstore public log |
+| `--log-api-key <key>` | API key for Sigil log server (not needed for Rekor) |
+
+### sigil verify-manifest
+
+Verify a manifest signature covering multiple files.
+
+```
+sigil verify-manifest <manifest> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--base-path <path>` | Base directory for resolving files (default: manifest file's directory) |
+| `--trust-bundle <path>` | Path to a signed trust bundle |
+| `--authority <fp>` | Expected authority fingerprint |
+| `--discover <uri>` | Discover trust bundle from URI |
+| `--policy <path>` | Path to a policy file |
+| `--at <date>` | Evaluate trust as of a historical date (ISO 8601) |
+
+### sigil sign-archive
+
+Sign an archive file with per-entry digests.
+
+```
+sigil sign-archive <archive> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--key <path>` | Path to a private key PEM file (ephemeral if omitted) |
+| `--output <path>` | Output path for the signature file |
+| `--label <value>` | Label for this signature |
+| `--passphrase <value>` | Passphrase if the signing key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--algorithm <alg>` | Signing algorithm (ephemeral default: `ecdsa-p256`) |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp` |
+| `--vault-key <ref>` | Vault key reference |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+| `--timestamp <url>` | TSA URL for RFC 3161 timestamping |
+| `--log-url <url>` | Remote transparency log URL, or `rekor` for Sigstore public log |
+| `--log-api-key <key>` | API key for Sigil log server (not needed for Rekor) |
+
+### sigil verify-archive
+
+Verify an archive signature with per-entry digests.
+
+```
+sigil verify-archive <archive> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--signature <path>` | Path to the signature file (default: `<archive>.archive.sig.json`) |
+| `--trust-bundle <path>` | Path to a signed trust bundle |
+| `--authority <fp>` | Expected authority fingerprint |
+| `--discover <uri>` | Discover trust bundle from URI |
+| `--policy <path>` | Path to a policy file |
+| `--at <date>` | Evaluate trust as of a historical date (ISO 8601) |
+
+### sigil sign-pe
+
+Sign a PE binary with Authenticode + Sigil envelope.
+
+```
+sigil sign-pe <pe-file> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--key <path>` | Path to a PFX/P12 certificate file |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+| `--output <path>` | Output path for signed PE (default: overwrite in-place) |
+| `--envelope <path>` | Output path for `.sig.json` envelope |
+| `--label <value>` | Label for this signature |
+| `--passphrase <value>` | Passphrase for the PFX file |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--timestamp <url>` | TSA URL for RFC 3161 timestamping |
+
+### sigil verify-pe
+
+Verify Authenticode signature and Sigil envelope of a PE binary.
+
+```
+sigil verify-pe <pe-file> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--signature <path>` | Path to the `.sig.json` envelope (default: `<pe-file>.sig.json`) |
+| `--trust-bundle <path>` | Path to a signed trust bundle |
+| `--authority <fp>` | Expected authority fingerprint |
+| `--discover <uri>` | Discover trust bundle from URI |
+| `--policy <path>` | Path to a policy file |
+| `--at <date>` | Evaluate trust as of a historical date (ISO 8601) |
+
+### sigil trust create
+
+Create a new unsigned trust bundle.
+
+```
+sigil trust create [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--name <name>` | **(Required)** Name for the trust bundle |
+| `--description <text>` | Description of the trust bundle |
+| `-o <path>` | Output file path (default: `<name>.trust.json`) |
+
+### sigil trust add
+
+Add a trusted key to a bundle.
+
+```
+sigil trust add <bundle> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--fingerprint <fp>` | **(Required)** Key fingerprint (`sha256:hex`) |
+| `--name <name>` | Display name for the key |
+| `--not-after <date>` | Expiry date (ISO 8601) |
+| `--scope-names <pattern>` | Allowed name patterns (glob, repeatable) |
+| `--scope-labels <label>` | Allowed labels (repeatable) |
+| `--scope-algorithms <alg>` | Allowed algorithms (repeatable) |
+
+### sigil trust remove
+
+Remove a trusted key from a bundle.
+
+```
+sigil trust remove <bundle> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--fingerprint <fp>` | **(Required)** Key fingerprint to remove |
+
+### sigil trust endorse
+
+Add an endorsement to a bundle.
+
+```
+sigil trust endorse <bundle> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--endorser <fp>` | **(Required)** Endorser key fingerprint |
+| `--endorsed <fp>` | **(Required)** Endorsed key fingerprint |
+| `--statement <text>` | Endorsement statement |
+| `--not-after <date>` | Endorsement expiry (ISO 8601) |
+| `--scope-names <pattern>` | Allowed name patterns (glob, repeatable) |
+| `--scope-labels <label>` | Allowed labels (repeatable) |
+
+### sigil trust sign
+
+Sign a trust bundle with an authority key.
+
+```
+sigil trust sign <bundle> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--key <path>` | Path to the authority's private key PEM |
+| `-o <path>` | Output path for signed bundle |
+| `--passphrase <value>` | Passphrase if the key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--algorithm <alg>` | Algorithm hint for encrypted PEM detection |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp` |
+| `--vault-key <ref>` | Vault key reference |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+
+### sigil trust show
+
+Display the contents of a trust bundle.
+
+```
 sigil trust show <bundle>
-sigil credential store --key <path>
-sigil credential remove --key <path>
-sigil credential list
-sigil log append <envelope> [--log <path>] [--signature-index <n>]
-sigil log verify [--log <path>] [--checkpoint <path>]
-sigil log search [--log <path>] [--key <fp>] [--artifact <name>] [--digest <sha256>]
-sigil log show [--log <path>] [--limit <n>] [--offset <n>]
-sigil log proof [--log <path>] [--index <n>] [--old-size <m>]
-sigil discover well-known <domain> [-o path]
-sigil discover dns <domain> [-o path]
-sigil discover git <url> [-o path]
-sigil sign-image <image> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--label "name"] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
-sigil verify-image <image> [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil sign-manifest <path> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--include "pattern"] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
-sigil verify-manifest <manifest> [--base-path path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil sign-archive <archive> [--key <private.pem|file.pfx>] [--vault <provider>] [--vault-key <reference>] [--cert-store <thumbprint>] [--store-location <CurrentUser|LocalMachine>] [--output path] [--label "name"] [--passphrase "pass"] [--passphrase-file path] [--algorithm name] [--timestamp <tsa-url>] [--log-url <url>] [--log-api-key <key>]
-sigil verify-archive <archive> [--signature path] [--trust-bundle path] [--authority fingerprint] [--discover uri] [--policy path]
-sigil git config --key <private.pem|file.pfx> | --vault <provider> --vault-key <reference> | --cert-store <thumbprint> [--store-location <CurrentUser|LocalMachine>] [--global] [--passphrase "pass"] [--passphrase-file path]
-sigil graph build --scan <path> [--output graph.json]
-sigil graph query --graph <path> [--artifact <name>] [--key <fingerprint>] [--from <node-id>] [--to <node-id>] [--chain] [--signed-by] [--path] [--reach] [--revoked] [--impact]
-sigil graph export --graph <path> --format <dot|json> [--output path]
 ```
 
-**generate**: Create a key pair for persistent signing.
-- `-o prefix` writes `prefix.pem` (private) and `prefix.pub.pem` (public)
-- Without `-o`, prints private key PEM to stdout
-- `--passphrase` encrypts the private key
-- `--algorithm` selects the signing algorithm (default: `ecdsa-p256`)
+### sigil trust revoke
 
-**sign**: Sign a file. Five signing modes:
-- Without `--key`, `--vault`, `--keyless`, or `--cert-store`: ephemeral mode (key generated in memory, discarded after signing)
-- With `--key`: persistent mode (loads private key from PEM or PFX file, algorithm auto-detected). PFX files are auto-detected by `.pfx`/`.p12` extension
-- With `--vault` and `--vault-key`: vault mode (private key never leaves the vault)
-- With `--keyless`: keyless mode (ephemeral key + OIDC identity binding via GitHub Actions, GitLab CI, or `--oidc-token`)
-- With `--cert-store`: Windows Certificate Store mode (key referenced by thumbprint, supports non-exportable/HSM-backed keys)
-- `--key`, `--vault`, `--keyless`, and `--cert-store` are mutually exclusive
-- `--store-location` selects `CurrentUser` (default) or `LocalMachine` store; requires `--cert-store`
-- `--keyless` requires `--timestamp` (ephemeral keys need timestamps for trust evaluation)
-- `--oidc-token` provides a manual OIDC JWT (requires `--keyless`); without it, the token is acquired from GitHub Actions or GitLab CI
-- `--algorithm` only applies to ephemeral and keyless modes (default: `ecdsa-p256`)
-- `--passphrase-file` reads the passphrase from a file (preferred over `--passphrase` for CI/CD)
-- Passphrase resolution: `--passphrase` > `--passphrase-file` > `SIGIL_PASSPHRASE` > `SIGIL_PASSPHRASE_FILE` > Windows Credential Manager > interactive prompt. See [Passphrase and credential management](#passphrase-and-credential-management)
-- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (non-fatal on failure)
-- `--log-url` submits the signature to a remote transparency log after signing (non-fatal on failure). Use `rekor` for Sigstore Rekor, or `rekor:https://...` for a self-hosted Rekor instance
-- `--log-api-key` provides the API key for Sigil LogServer write operations (not needed for Rekor)
-- SBOM format is auto-detected for CycloneDX and SPDX JSON files
+Revoke a key in a trust bundle.
 
-**attest**: Create a DSSE attestation for a file. Four signing modes (same as `sign`):
-- Without `--key`, `--vault`, or `--cert-store`: ephemeral mode
-- With `--key`: persistent mode (PEM or PFX, auto-detected)
-- With `--vault` and `--vault-key`: vault mode
-- With `--cert-store`: Windows Certificate Store mode
-- `--predicate` and `--type` are required
-- `--type` accepts short names (`slsa-provenance-v1`, `spdx-json`, `cyclonedx`) or any valid URI
-- `--timestamp` requests an RFC 3161 timestamp (non-fatal on failure)
-- If `--output` points to an existing `.att.json`, the new signature is appended
+```
+sigil trust revoke <bundle> [options]
+```
 
-**verify-attestation**: Verify a DSSE attestation for a file.
-- Public key is extracted from the `.att.json` — no key import needed
-- Default attestation path is `<file>.att.json`; override with `--attestation`
-- `--type` filters by predicate type — rejects attestations with a different type
-- `--trust-bundle` and `--discover` enable trust evaluation (same as `verify`)
-- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
+| Option | Description |
+|--------|-------------|
+| `--fingerprint <fp>` | **(Required)** Key fingerprint to revoke (`sha256:<64 hex chars>`) |
+| `--reason <text>` | Reason for revocation (max 1024 chars) |
 
-**timestamp**: Apply RFC 3161 timestamp tokens to an existing signature envelope.
-- `--tsa` is required — the URL of the Timestamp Authority
-- `--index` timestamps a specific signature entry (0-based); without it, all un-timestamped entries are processed
-- Already-timestamped entries are skipped
+### sigil trust identity-add
 
-**verify**: Verify a file's signature.
-- Public key is extracted from the `.sig.json` — no key import needed
-- Algorithm is read from the envelope — works with any supported algorithm
-- SBOM metadata is displayed when present in the envelope
-- `--trust-bundle` and `--authority` enable trust evaluation on top of crypto verification
-- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
-- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
-- When using `--discover`, authority is auto-extracted from the bundle's signature if `--authority` is omitted
+Add a trusted OIDC identity to a bundle.
 
-**trust create**: Create an empty unsigned trust bundle.
+```
+sigil trust identity-add <bundle> [options]
+```
 
-**trust add / remove**: Add or remove trusted keys from an unsigned bundle.
+| Option | Description |
+|--------|-------------|
+| `--issuer <url>` | **(Required)** OIDC issuer URL |
+| `--subject <pattern>` | **(Required)** Subject pattern (glob) |
+| `--name <name>` | Display name for this identity |
+| `--not-after <date>` | Expiry date (ISO 8601) |
 
-**trust endorse**: Add an endorsement ("Key A vouches for Key B") to an unsigned bundle.
+### sigil trust identity-remove
 
-**trust sign**: Sign a bundle with an authority key. `--key`, `--vault`/`--vault-key`, or `--cert-store` is required (mutually exclusive). This locks the bundle — modifications require re-signing.
+Remove a trusted OIDC identity from a bundle.
 
-**trust revoke**: Revoke a key in an unsigned bundle. The key remains in the key list but is marked as revoked. Revoked keys are rejected during trust evaluation. The bundle must be re-signed after adding revocations.
+```
+sigil trust identity-remove <bundle> [options]
+```
 
-**trust identity-add**: Add a trusted OIDC identity to an unsigned bundle.
-- `--issuer` is the OIDC issuer URL (exact match during verification)
-- `--subject` is a glob pattern matching the JWT `sub` claim (e.g., `repo:myorg/*`)
-- `--name` is an optional display name for the identity
-- `--not-after` sets an expiry date for the identity trust entry
+| Option | Description |
+|--------|-------------|
+| `--issuer <url>` | **(Required)** OIDC issuer URL |
+| `--subject <pattern>` | **(Required)** Subject pattern to remove |
 
-**trust identity-remove**: Remove a trusted OIDC identity from an unsigned bundle.
-- Matches on both `--issuer` and `--subject` (both required)
+### sigil discover well-known
 
-**trust show**: Display the contents of a trust bundle (keys, endorsements, identities, revocations, signature status).
+Fetch trust bundle from a well-known URL.
 
-**credential store**: Store an encrypted key's passphrase in Windows Credential Manager.
-- `--key` is required — the path to the private key file
-- Prompts for the passphrase interactively (requires a terminal)
-- Validates the passphrase by decrypting the key before storing
-- Windows only — returns an error on other platforms
+```
+sigil discover well-known <domain> [options]
+```
 
-**credential remove**: Remove a stored passphrase from Windows Credential Manager.
-- `--key` is required — the path to the private key file
+| Option | Description |
+|--------|-------------|
+| `-o <path>` | Save the trust bundle to a file |
 
-**credential list**: List all key paths with stored passphrases.
-- Shows key file paths only — passphrase values are never displayed
-- Windows only — returns an error on other platforms
+### sigil discover dns
 
-**log append**: Append a signing event to the transparency log.
-- `<envelope>` is the path to a `.sig.json` file
-- `--log` overrides the default log path (`.sigil.log.jsonl`)
-- `--signature-index` selects which signature to log from a multi-signature envelope (default: 0)
-- Duplicate signatures are rejected
+Look up DNS TXT records for a trust bundle.
 
-**log verify**: Verify the integrity of the transparency log.
-- Recomputes all leaf hashes and the Merkle root
-- Checks the root matches the checkpoint file
-- Reports invalid entries and checkpoint mismatches
+```
+sigil discover dns <domain> [options]
+```
 
-**log search**: Search the log by key fingerprint, artifact name, or digest.
-- At least one filter is required (`--key`, `--artifact`, or `--digest`)
-- Filters can be combined (AND logic)
+| Option | Description |
+|--------|-------------|
+| `-o <path>` | Save the trust bundle to a file |
 
-**log show**: Display all log entries.
-- `--limit` and `--offset` for pagination
+### sigil discover git
 
-**log proof**: Generate and verify inclusion or consistency proofs.
-- `--index` alone generates an inclusion proof (proves entry exists in the log)
-- `--old-size` alone generates a consistency proof (proves the log is append-only)
-- At least one of `--index` or `--old-size` is required
+Fetch trust bundle from a git repository.
 
-**discover well-known**: Fetch a trust bundle from `https://domain/.well-known/sigil/trust.json`.
+```
+sigil discover git <url> [options]
+```
 
-**discover dns**: Look up `_sigil.domain` TXT records for a bundle URL, then fetch it.
+| Option | Description |
+|--------|-------------|
+| `-o <path>` | Save the trust bundle to a file |
 
-**discover git**: Shallow-clone a git repository and read `.sigil/trust.json` or `trust.json`. Use `#branch` in the URL for a specific branch or tag.
+### sigil log append
 
-**git config**: Configure git to use Sigil for commit/tag signing.
-- `--key`, `--vault`/`--vault-key`, or `--cert-store` is required (mutually exclusive)
-- `--key`: path to the private key PEM or PFX file (auto-detected by extension)
-- `--vault` and `--vault-key`: vault provider and key reference (see [Vault-backed signing](#vault-backed-signing))
-- `--cert-store`: Windows Certificate Store thumbprint (Windows only)
-- `--store-location`: `CurrentUser` (default) or `LocalMachine`; requires `--cert-store`
-- `--global` sets git config globally and enables `commit.gpgsign = true`
-- Without `--global`, config is local (per-repository) and commits must be signed with `-S`
-- Generates a wrapper script in `~/.sigil/` and sets `gpg.format`, `gpg.x509.program`, and `user.signingkey`
-- Passphrases are NOT embedded in wrapper scripts. If the key is encrypted, the passphrase is resolved at signing time via the [resolution chain](#resolution-chain)
-- On Windows with an encrypted key, a hint is shown to use `sigil credential store --key <path>` for seamless signing
+Append a signing event to the transparency log.
 
-**sign-image**: Sign an OCI container image in a registry.
-- `<image>` is a full image reference (e.g., `ghcr.io/myorg/myapp:v1.0` or `registry/repo@sha256:...`)
-- Four signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`), cert store (`--cert-store`)
-- `--key`, `--vault`, and `--cert-store` are mutually exclusive
-- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
-- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
-- `--label` attaches a label to the signature
-- `--log-url` submits the signature to a remote transparency log (non-fatal on failure)
-- `--log-api-key` provides the API key for Sigil LogServer write operations
-- Registry authentication is resolved automatically (see [Registry authentication](#registry-authentication))
+```
+sigil log append <envelope> [options]
+```
 
-**verify-image**: Verify signatures on an OCI container image.
-- `<image>` is a full image reference
-- Discovers Sigil signature artifacts via the OCI 1.1 referrers API
-- `--trust-bundle` and `--authority` enable trust evaluation
-- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
-- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
+| Option | Description |
+|--------|-------------|
+| `--log <path>` | Path to log file (default: `.sigil.log.jsonl`) |
+| `--signature-index <n>` | Signature index within envelope (default: 0) |
 
-**sign-manifest**: Sign multiple files with a shared manifest signature.
-- `<path>` is a directory (all files signed recursively)
-- Four signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`), cert store (`--cert-store`)
-- `--key`, `--vault`, and `--cert-store` are mutually exclusive
-- `--include` filters files by glob pattern (e.g., `"*.dll"`)
-- `--output` overrides default output path (`<path>/manifest.sig.json`)
-- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
-- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
-- `--label` attaches a label to the signature
-- `--log-url` submits the signature to a remote transparency log (non-fatal on failure)
-- `--log-api-key` provides the API key for Sigil LogServer write operations
-- If `--output` points to an existing `.manifest.sig.json`, the new signature is appended
-- SBOM format is auto-detected per file for CycloneDX and SPDX JSON files
+### sigil log verify
 
-**verify-manifest**: Verify a manifest signature covering multiple files.
-- `<manifest>` is the path to a `.manifest.sig.json` file
-- `--base-path` overrides the base directory for file resolution (default: manifest file's directory)
-- Verifies per-file digest integrity and shared signature validity
-- `--trust-bundle` and `--authority` enable trust evaluation
-- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
-- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
+Verify transparency log integrity.
 
-**sign-archive**: Sign an archive file (ZIP, tar.gz, tar) with per-entry digests.
-- `<archive>` is the path to a ZIP, tar.gz, or tar file (format auto-detected by magic bytes)
-- Four signing modes (same as `sign`): ephemeral, persistent (`--key`), vault (`--vault`/`--vault-key`), cert store (`--cert-store`)
-- `--key`, `--vault`, and `--cert-store` are mutually exclusive
-- `--output` overrides default output path (`<archive>.archive.sig.json`)
-- `--algorithm` only applies to ephemeral mode (default: `ecdsa-p256`)
-- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL
-- `--label` attaches a label to the signature
-- `--log-url` submits the signature to a remote transparency log (non-fatal on failure)
-- `--log-api-key` provides the API key for Sigil LogServer write operations
-- SBOM format is auto-detected per entry for CycloneDX and SPDX JSON entries
-- NuGet `.nuspec` metadata is extracted from `.nupkg` archives (package id, version, authors)
-- 500 MB per-entry size limit for zip bomb protection
+```
+sigil log verify [options]
+```
 
-**verify-archive**: Verify an archive signature with per-entry digest checking.
-- `<archive>` is the path to the archive file
-- Default signature path is `<archive>.archive.sig.json`; override with `--signature`
-- Verifies per-entry digest integrity and shared signature validity
-- Reports extra entries in the archive not covered by the envelope (warning, not failure)
-- `--trust-bundle` and `--authority` enable trust evaluation
-- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
-- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
+| Option | Description |
+|--------|-------------|
+| `--log <path>` | Path to log file (default: `.sigil.log.jsonl`) |
+| `--checkpoint <path>` | Path to checkpoint file |
 
-**sign-pe**: Sign a PE binary (.exe, .dll) with an embedded Authenticode signature and a detached Sigil envelope.
-- `<pe-file>` is the path to the PE binary
-- Authenticode requires an X.509 certificate — PEM keys are rejected
-- Two signing modes: PFX file (`--key`) or Windows Certificate Store (`--cert-store`)
-- `--key` and `--cert-store` are mutually exclusive; one is required
-- `--store-location` specifies `CurrentUser` (default) or `LocalMachine` (requires `--cert-store`)
-- `--output` overrides the output path for the signed PE (default: overwrite in-place)
-- `--envelope` overrides the output path for the `.sig.json` (default: `<pe-file>.sig.json`)
-- `--label` attaches a label to the signature
-- `--passphrase` / `--passphrase-file` provide the PFX decryption passphrase (resolved via passphrase chain)
-- `--timestamp` requests an RFC 3161 timestamp from the given TSA URL (applied to both Authenticode and Sigil envelope)
-- 500 MB file size limit
+### sigil log search
 
-**verify-pe**: Verify the Authenticode signature and Sigil envelope of a PE binary.
-- `<pe-file>` is the path to the PE binary
-- Verifies the embedded Authenticode signature (digest recomputation + CMS signature check)
-- Reports subject, issuer, thumbprint, digest algorithm, and timestamp if present
-- If a `.sig.json` envelope exists, verifies it independently
-- Default envelope path is `<pe-file>.sig.json`; override with `--signature`
-- `--trust-bundle` and `--authority` enable trust evaluation on the Sigil envelope
-- `--discover` fetches a trust bundle via well-known URL, DNS, or git (mutually exclusive with `--trust-bundle`)
-- `--policy` evaluates verification results against a declarative policy file (mutually exclusive with `--trust-bundle` and `--discover`)
-- 500 MB file size limit
+Search transparency log entries.
 
-**graph build**: Scan a directory and build a trust graph from all signing artifacts found.
-- `--scan` is required — the directory to scan for `.sig.json`, `.manifest.sig.json`, `.archive.sig.json`, `.att.json`, and `trust.json` files
-- `--output` writes the graph to a JSON file (default: `graph.json`)
-- Deduplicates nodes by ID across files (first-write-wins for properties)
+```
+sigil log search [options]
+```
 
-**graph query**: Query a trust graph.
-- `--graph` is required — the path to a previously built graph JSON file
-- `--artifact` + `--chain`: trace the signing chain from an artifact back to root authorities (follows SignedBy and EndorsedBy edges)
-- `--key` + `--signed-by`: list all artifacts signed by a given key
-- `--from` + `--to` + `--path`: find the shortest path between any two nodes
-- `--key` + `--reach`: find all nodes reachable from a given key
-- `--revoked` + `--impact`: find all artifacts transitively affected by revoked keys (traverses endorsement chains)
+| Option | Description |
+|--------|-------------|
+| `--log <path>` | Path to log file (default: `.sigil.log.jsonl`) |
+| `--key <fp>` | Search by key fingerprint |
+| `--artifact <name>` | Search by artifact name |
+| `--digest <hash>` | Search by signature or artifact digest |
 
-**graph export**: Export a trust graph for visualization or programmatic consumption.
-- `--graph` is required — the path to a previously built graph JSON file
-- `--format` is required — `dot` (Graphviz DOT) or `json`
-- `--output` writes to a file; without it, writes to stdout
-- DOT output uses shapes and colors: hexagons for keys, boxes for artifacts, ellipses for identities, diamonds for attestations, cylinders for log records; revoked edges are drawn in red
+### sigil log show
+
+Display transparency log entries.
+
+```
+sigil log show [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--log <path>` | Path to log file (default: `.sigil.log.jsonl`) |
+| `--limit <n>` | Maximum number of entries to show |
+| `--offset <n>` | Number of entries to skip |
+
+### sigil log proof
+
+Generate inclusion or consistency proof.
+
+```
+sigil log proof [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--log <path>` | Path to log file (default: `.sigil.log.jsonl`) |
+| `--index <n>` | Leaf index for inclusion proof |
+| `--old-size <n>` | Old tree size for consistency proof |
+
+### sigil git config
+
+Configure git to use Sigil for commit/tag signing.
+
+```
+sigil git config [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--key <path>` | Path to a private key PEM file |
+| `--global` | Set git config globally (also enables `commit.gpgsign`) |
+| `--passphrase <value>` | Passphrase if the signing key is encrypted |
+| `--passphrase-file <path>` | Path to file containing the passphrase |
+| `--vault <provider>` | Vault provider: `hashicorp`, `azure`, `aws`, `gcp`, `pkcs11` |
+| `--vault-key <ref>` | Key reference in the vault provider |
+| `--cert-store <thumbprint>` | Certificate thumbprint for Windows Certificate Store |
+| `--store-location <loc>` | Store location: `CurrentUser` (default) or `LocalMachine` |
+
+### sigil credential store
+
+Store a passphrase for a key in Windows Credential Manager.
+
+```
+sigil credential store
+```
+
+### sigil credential remove
+
+Remove a stored passphrase from Windows Credential Manager.
+
+```
+sigil credential remove
+```
+
+### sigil credential list
+
+List keys with stored passphrases in Windows Credential Manager.
+
+```
+sigil credential list
+```
+
+### sigil graph build
+
+Build a trust graph from artifacts in a directory.
+
+```
+sigil graph build [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--scan <dir>` | **(Required)** Directory to scan for signature envelopes, trust bundles, and attestations |
+| `--output <path>` | Output file path for the graph (default: `graph.json`) |
+
+### sigil graph query
+
+Query a trust graph.
+
+```
+sigil graph query [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--graph <path>` | **(Required)** Path to `graph.json` file |
+| `--key <fp>` | Key fingerprint for queries |
+| `--artifact <name>` | Artifact name for queries |
+| `--from <id>` | Start node ID for path query |
+| `--to <id>` | End node ID for path query |
+| `--reach` | Find all reachable nodes from key |
+| `--chain` | Show trust chain for artifact |
+| `--signed-by` | Show artifacts signed by key |
+| `--revoked` | Analyze revoked key impact |
+| `--impact` | Show impact analysis (use with `--revoked`) |
+| `--path` | Find shortest path between nodes |
+
+### sigil graph export
+
+Export a trust graph in DOT or JSON format.
+
+```
+sigil graph export [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--graph <path>` | **(Required)** Path to `graph.json` file |
+| `--format <fmt>` | **(Required)** Export format: `dot` or `json` |
+| `--output <path>` | Output file path (default: stdout) |
+
+### sigil impact
+
+Analyze the impact of a key compromise.
+
+```
+sigil impact [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--fingerprint <fp>` | Key fingerprint to analyze (`sha256:...`) |
+| `--key <path>` | PEM file path -- compute fingerprint from SPKI |
+| `--scan <dir>` | Directory to scan for building the graph |
+| `--graph <path>` | Path to pre-built `graph.json` file |
+| `--format <fmt>` | Output format: `text` (default) or `json` |
+| `--output <path>` | Write output to file instead of stdout |
+
+### sigil baseline learn
+
+Learn signing patterns from existing signatures.
+
+```
+sigil baseline learn [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--scan <dir>` | **(Required)** Directory to scan for signatures |
+| `--output <path>` | Output baseline file path (default: `<dir>/.sigil.baseline.json`) |
 
 ## Dotnet tool reference
 
