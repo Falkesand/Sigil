@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.1
+
+### Changed
+
+- Updated all NuGet dependencies to latest stable versions
+- Migrated System.CommandLine from 2.0.0-beta5 to 2.0.3 stable
+- Moved .NET 10 preview packages to GA releases (System.Security.Cryptography.Pkcs, Microsoft.Data.Sqlite, Microsoft.AspNetCore.Mvc.Testing to 10.0.3)
+- Updated Azure.Identity to 1.17.1
+- Updated Google.Cloud.Kms.V1 to 3.21.0
+- Updated Microsoft.Data.SqlClient to 6.1.4
+- Updated Npgsql to 10.0.1
+- Updated Microsoft.NET.Test.Sdk to 18.0.1
+
 ## 0.9.0
 
 ### Added

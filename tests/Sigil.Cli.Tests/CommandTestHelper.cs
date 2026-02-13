@@ -133,8 +133,7 @@ public static class CommandTestHelper
             rootCommand.Add(BaselineCommand.Create());
 
             Environment.ExitCode = 0;
-            var config = new CommandLineConfiguration(rootCommand);
-            var exitCode = await config.InvokeAsync(args);
+            var exitCode = await rootCommand.Parse(args).InvokeAsync();
 
             // Some commands set Environment.ExitCode directly
             if (Environment.ExitCode != 0)
